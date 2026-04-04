@@ -1,655 +1,692 @@
 (function() {
   /**
    * BollyFlix - SkyStream Plugin
-   * Library functions preserved. loadStreams fixed for working stream URLs.
-   * Exact patterns from working SkyStream plugins.
+   * Migrated from CloudStream Kotlin Provider
+   * Supports: Movies, TV Series, Anime, Asian Dramas
    */
 
+  // === CONFIGURATION ===
   const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36";
-  const CINEMETA = "https://aiometadata.elfhosted.com/stremio/9197a4a9-2f5b-4911-845e-8704c520bdf7/meta";
-  const UTILS = "https://raw.githubusercontent.com/SaurabhKaperwan/Utils/refs/heads/main/urls.json";
+  const CINEMETA_URL = "https://aiometadata.elfhosted.com/stremio/9197a4a9-2f5b-4911-845e-8704c520bdf7/meta";
+  const UTILS_URL = "https://raw.githubusercontent.com/SaurabhKaperwan/Utils/refs/heads/main/urls.json";
 
-  // CRITICAL: Headers passed DIRECTLY to http_get, not nested in { headers: {} }
-  const HEADERS = {
+  const BASE_HEADERS = {
     "User-Agent": UA,
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Referer": manifest.baseUrl + "/"
+    "Referer": `${manifest.baseUrl}/`
   };
 
-  // === UTILS ===
-  function normUrl(u, base) {
-    if (!u) return "";
-    u = String(u).trim();
-    if (!u) return "";
-    if (u.indexOf("//") === 0) return "https:" + u;
-    if (/^https?:\/\//i.test(u)) return u;
-    return u.indexOf("/") === 0 ? base + u : base + "/" + u;
+  // === HELPER FUNCTIONS ===
+
+  function normalizeUrl(url, base) {
+    if (!url) return "";
+    const raw = String(url).trim();
+    if (!raw) return "";
+    if (raw.startsWith("//")) return `https:${raw}`;
+    if (/^https?:\/\//i.test(raw)) return raw;
+    if (raw.startsWith("/")) return `${base}${raw}`;
+    return `${base}/${raw}`;
   }
 
-  function clean(t) {
-    return t ? String(t).replace(/Download\s+/gi, "").replace(/\s+/g, " ").trim() : "Unknown";
+  function cleanTitle(raw) {
+    if (!raw) return "Unknown";
+    return String(raw).replace(/Download\s+/gi, "").replace(/\s+/g, " ").trim();
   }
 
   function extractQuality(text) {
     if (!text) return "Auto";
-    var match = String(text).match(/(\d{3,4})[pP]/);
-    if (match && match[1]) {
-      var q = parseInt(match[1], 10);
-      if (q >= 2160) return "4K";
-      if (q >= 1440) return "1440p";
-      if (q >= 1080) return "1080p";
-      if (q >= 720) return "720p";
-      if (q >= 480) return "480p";
-    }
-    var s = String(text).toLowerCase();
-    if (s.indexOf("4k") >= 0 || s.indexOf("2160") >= 0) return "4K";
-    if (s.indexOf("1080") >= 0 || s.indexOf("full") >= 0) return "1080p";
-    if (s.indexOf("720") >= 0 || s.indexOf("hd") >= 0) return "720p";
-    if (s.indexOf("480") >= 0 || s.indexOf("sd") >= 0) return "480p";
-    if (s.indexOf("cam") >= 0) return "CAM";
-    return "Auto";  }
-
-  function isSeries(u) { return /series|web-series|season/i.test(String(u)); }
-  
-  function dedupe(arr) {
-    var s = new Set(), r = [];
-    for (var i = 0; i < arr.length; i++) {
-      var item = arr[i];
-      if (item && item.url && !s.has(item.url)) {
-        s.add(item.url);
-        r.push(item);
-      }
-    }
-    return r;
+    const t = String(text).toLowerCase();
+    if (t.includes("2160") || t.includes("4k") || t.includes("ultra")) return "4K";
+    if (t.includes("1080") || t.includes("full")) return "1080p";
+    if (t.includes("1440") || t.includes("quad")) return "1440p";
+    if (t.includes("720") || t.includes("hd")) return "720p";
+    if (t.includes("480") || t.includes("sd")) return "480p";
+    if (t.includes("360")) return "360p";
+    if (t.includes("cam")) return "CAM";
+    return "Auto";
   }
 
-  function b64d(str) {
+  function isSeriesUrl(url) {
+    return /series|web-series|season/i.test(String(url));  }
+
+  function uniqueByUrl(items) {
+    const out = [];
+    const seen = new Set();
+    for (const it of items) {
+      if (!it || !it.url || seen.has(it.url)) continue;
+      seen.add(it.url);
+      out.push(it);
+    }
+    return out;
+  }
+
+  function safeBase64Decode(str) {
     if (!str) return "";
     try {
-      var s = String(str).replace(/-/g, "+").replace(/_/g, "/");
+      let s = String(str).trim().replace(/-/g, "+").replace(/_/g, "/");
       while (s.length % 4 !== 0) s += "=";
       return atob(s);
-    } catch (_) { return ""; }
+    } catch (_) {
+      try { return atob(str); } catch (__) { return ""; }
+    }
   }
 
-  function htmlDec(t) {
-    if (!t) return "";
-    return String(t)
-      .replace(/&amp;/g, "&")
-      .replace(/&quot;/g, '"')
-      .replace(/&#(\d+);/g, function(_, c) { return String.fromCharCode(parseInt(c, 10)); });
-  }
-  
-  function text(el) {
-    return htmlDec((el && el.textContent ? el.textContent : "").replace(/\s+/g, " ").trim());
+  function htmlDecode(text) {
+    if (!text) return "";
+    return String(text)
+      .replace(/&/g, "&").replace(/"/g, '"').replace(/'/g, "'")
+      .replace(/</g, "<").replace(/>/g, ">")
+      .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code, 10)));
   }
 
-  // === NETWORK - CRITICAL: Headers passed directly ===
-  async function req(u, h) {
-    h = h || {};
-    var headers = {};
-    for (var k in HEADERS) headers[k] = HEADERS[k];
-    for (var k in h) headers[k] = h[k];
-    return await http_get(u, headers);  // ← Headers direct, NOT { headers: {...} }
+  function textOf(el) {
+    return htmlDecode((el?.textContent || "").replace(/\s+/g, " ").trim());
   }
 
-  function isCF(r, url) {
-    var b = String(r && r.body ? r.body : "").toLowerCase();
-    var titleMatch = b.match(/<title>([^<]*)</i);
-    var t = (titleMatch && titleMatch[1] ? titleMatch[1] : "").toLowerCase();    return (/cloudflare/.test(b) && /attention|verify|just a moment|cf-/i.test(b)) || t.indexOf("just a moment") >= 0;
+  function getAttr(el, ...attrs) {
+    if (!el) return "";
+    for (const attr of attrs) {
+      const v = el.getAttribute(attr);
+      if (v && String(v).trim()) return String(v).trim();
+    }
+    return "";
   }
 
-  async function doc(u, h) {
-    h = h || {};
-    var r = await req(u, h);
-    if (isCF(r, u)) throw new Error("CLOUDFLARE: " + u);
-    return await parseHtml(r.body);
+  // === NETWORK UTILS ===
+
+  async function request(url, headers = {}) {
+    return await http_get(url, { headers: { ...BASE_HEADERS, ...headers } });
+  }
+  function isCloudflareBlocked(response, targetUrl) {
+    const body = String(response?.body || "");
+    const headerServer = (response?.headers?.["server"] || "").toLowerCase();
+    const title = (body.match(/<title>([^<]*)</i)?.[1] || "").toLowerCase();
+    
+    if (/cloudflare/i.test(body) && /attention required|verify you are human|just a moment|cf-ray|cf-chl/i.test(body)) return true;
+    if (title.includes("just a moment") || title.includes("attention required")) return true;
+    if (headerServer.includes("cloudflare") && /checking your browser|verify you are human/i.test(body)) return true;
+    if (String(targetUrl || "").includes("/cdn-cgi/challenge-platform/")) return true;
+    return false;
   }
 
-  async function dynBase(src) {
+  async function loadDoc(url, headers = {}) {
+    const res = await request(url, headers);
+    const finalUrl = String(res?.finalUrl || res?.url || url || "");
+    
+    if (isCloudflareBlocked(res, finalUrl)) {
+      throw new Error(`CLOUDFLARE_BLOCKED: ${finalUrl}`);
+    }
+    return await parseHtml(res.body);
+  }
+
+  async function fetchDynamicBaseUrl(source) {
     try {
-      var r = await req(UTILS);
-      var j = JSON.parse(r.body);
-      return (j && j[src] && j[src].trim) ? j[src].trim() : null;
-    } catch(_) { return null; }
-  }
-  
-  async function cinemeta(type, id) {
-    try {
-      var r = await req(CINEMETA + "/" + type + "/" + id + ".json", {"Accept": "application/json"});
-      return JSON.parse(r.body);
-    } catch(_) { return null; }
+      const res = await request(UTILS_URL, {}, true);
+      const urls = JSON.parse(res.body);
+      return urls?.[source]?.trim() || null;
+    } catch (_) {
+      return null;
+    }
   }
 
-  // === BYPASS ===
-  async function bypass(id) {
+  async function fetchCinemetaData(type, imdbId) {
     try {
-      var r = await req("https://web.sidexfee.com/?id=" + id);
-      var body = String(r.body || "");
-      var patterns = [
-        /"link":"([^"]+)"/,
-        /"url":"([^"]+)"/,
-        /data-link="([^"]+)"/
-      ];
-      for (var i = 0; i < patterns.length; i++) {
-        var match = body.match(patterns[i]);
-        if (match && match[1]) {
-          var decoded = match[1].replace(/\\\//g, "/");
-          try { return b64d(decoded); } catch(_) { return decoded; }
-        }
+      const url = `${CINEMETA_URL}/${type}/${imdbId}.json`;
+      const res = await request(url, { "Accept": "application/json" }, true);
+      return JSON.parse(res.body);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // === BYPASS PROTECTED LINKS ===
+
+  async function bypassProtectedLink(id) {
+    try {
+      const url = `https://web.sidexfee.com/?id=${id}`;
+      const res = await request(url, {}, true);
+      const body = String(res.body || "");      const match = body.match(/"link":"([^"]+)"/);
+      if (match && match[1]) {
+        return safeBase64Decode(match[1].replace(/\\\//g, "/"));
       }
     } catch (_) {}
     return null;
   }
 
-  async function resolveUrl(u, max) {
-    max = max || 7;
-    var cur = u;
-    for (var i = 0; i < max; i++) {      try {
-        var opts = {};
-        for (var k in HEADERS) opts[k] = HEADERS[k];
-        opts.allowRedirects = false;
-        var r = await http_get(cur, opts);
-        if (r.code === 200) break;
-        if (r.code >= 300 && r.code < 400) {
-          var loc = r.headers && (r.headers["location"] || r.headers["Location"]);
-          if (!loc) break;
-          cur = loc;
-        } else break;
-      } catch (_) { break; }
+  async function resolveFinalUrl(startUrl, maxRedirects = 7) {
+    let currentUrl = startUrl;
+    for (let i = 0; i < maxRedirects; i++) {
+      try {
+        const res = await request(currentUrl, {}, false);
+        if (res.code === 200) break;
+        if (res.code >= 300 && res.code < 400) {
+          const location = res.headers?.["location"] || res.headers?.["Location"];
+          if (!location) break;
+          currentUrl = location;
+        } else {
+          break;
+        }
+      } catch (_) {
+        break;
+      }
     }
-    return cur;
+    return currentUrl;
   }
 
-  // === EXTRACTORS - Push to array, minimal StreamResult ===
-  
-  async function extractGDFlix(url, streams) {
+  // === EXTRACTORS ===
+
+  async function extractGDFlix(url, fileName = "", fileSize = "") {
     try {
-      var baseUrl = (url.match(/^https?:\/\/[^/]+/) || [""])[0];
-      var latest = await dynBase("gdflix");
-      if (latest && baseUrl !== latest) {
-        url = url.replace(baseUrl, latest);
-        baseUrl = latest;
+      let baseUrl = url.match(/^https?:\/\/[^/]+/)?.[0] || "";
+      const dynamicBase = await fetchDynamicBaseUrl("gdflix");
+      if (dynamicBase && baseUrl !== dynamicBase) {
+        url = url.replace(baseUrl, dynamicBase);
+        baseUrl = dynamicBase;
       }
 
-      var d = await doc(url);
-      var nameLi = d.querySelector("ul > li:contains(Name)");
-      var sizeLi = d.querySelector("ul > li:contains(Size)");
-      var fileName = nameLi ? text(nameLi).split("Name :")[1] || "" : "";
-      var fileSize = sizeLi ? text(sizeLi).split("Size :")[1] || "" : "";
-      var quality = extractQuality(fileName);
+      const doc = await loadDoc(url);
+      const name = fileName || doc.querySelector("ul > li:contains(Name)")?.textContent?.split("Name :")?.[1]?.trim() || "";
+      const size = fileSize || doc.querySelector("ul > li:contains(Size)")?.textContent?.split("Size :")?.[1]?.trim() || "";
+      const quality = extractQuality(name);
 
-      var buttons = Array.from(d.querySelectorAll("div.text-center a, a.btn-success"));
-      
-      for (var bi = 0; bi < buttons.length; bi++) {
-        var anchor = buttons[bi];
-        var txt = text(anchor).toLowerCase();
-        var href = anchor.getAttribute("href");
-        if (!href) continue;
+      const results = [];
+      const buttons = doc.querySelectorAll("div.text-center a, a.btn-success");
 
-        var label = "";
-        var finalUrl = href;
+      for (const btn of buttons) {
+        const text = btn.textContent?.toLowerCase() || "";
+        const href = btn.getAttribute("href");        if (!href) continue;
 
-        if (txt.indexOf("fsl v2") >= 0) {
-          label = "[FSL V2]";
-        } else if (txt.indexOf("direct dl") >= 0 || txt.indexOf("direct server") >= 0) {
-          label = "[Direct]";
-        } else if (txt.indexOf("cloud download") >= 0 && txt.indexOf("r2") >= 0) {          label = "[Cloud]";
-        } else if (txt.indexOf("fast cloud") >= 0) {
-          try {
-            var nested = await doc(baseUrl + href);
-            var dlink = nested.querySelector("div.card-body a");
-            if (!dlink) continue;
-            finalUrl = dlink.getAttribute("href");
-            label = "[FAST CLOUD]";
-          } catch (_) { continue; }
-        } else if (href.indexOf("pixeldra") >= 0) {
-          var base = (href.match(/^https?:\/\/[^/]+/) || ["https://pixeldrain.com"])[0];
-          finalUrl = href.indexOf("download") >= 0 ? href : base + "/api/file/" + href.split("/").pop() + "?download";
-          label = "[Pixeldrain]";
-        } else if (txt.indexOf("instant dl") >= 0) {
-          try {
-            var opts = {};
-            for (var k in HEADERS) opts[k] = HEADERS[k];
-            opts.allowRedirects = false;
-            var r = await http_get(href, opts);
-            var loc = r.headers && (r.headers["location"] || r.headers["Location"]) || "";
-            var instant = loc.indexOf("url=") >= 0 ? loc.split("url=")[1] : loc;
-            if (instant) { finalUrl = instant; label = "[Instant]"; }
-            else continue;
-          } catch (_) { continue; }
-        } else if (txt.indexOf("gofile") >= 0) {
-          // Fallback: push as-is for SkyStream built-in GoFile support
-          streams.push(new StreamResult({ url: href, source: "Gofile" }));
-          continue;
-        } else {
+        let label = "GDFlix";
+        let finalUrl = href;
+
+        if (text.includes("fsl v2")) {
+          label = "GDFlix [FSL V2]";
+        } else if (text.includes("direct") || text.includes("instant")) {
+          label = "GDFlix [Direct]";
+          if (text.includes("instant")) {
+            const redir = await resolveFinalUrl(href);
+            if (redir) finalUrl = redir;
+          }
+        } else if (text.includes("cloud") || text.includes("r2")) {
+          label = "GDFlix [Cloud]";
+        } else if (text.includes("fast cloud")) {
+          const nestedDoc = await loadDoc(`${baseUrl}${href}`);
+          const nestedLink = nestedDoc.querySelector("div.card-body a")?.getAttribute("href");
+          if (nestedLink) finalUrl = nestedLink;
+          label = "GDFlix [FAST CLOUD]";
+        } else if (href.includes("pixeldra")) {
+          label = "GDFlix [Pixeldrain]";
+          const base = href.match(/^https?:\/\/[^/]+/)?.[0] || "https://pixeldrain.com";
+          finalUrl = href.includes("download") ? href : `${base}/api/file/${href.split("/").pop()}?download`;
+        } else if (text.includes("gofile")) {
+          const delegated = await loadGenericExtractor(href);
+          results.push(...delegated);
           continue;
         }
 
-        if (finalUrl && finalUrl.indexOf("http") === 0) {
-          // CRITICAL: Minimal StreamResult - only url + source required
-          streams.push(new StreamResult({
+        if (finalUrl && finalUrl.startsWith("http")) {
+          results.push(new StreamResult({
+            source: label,
+            name: `${label} ${name ? `[${name}]` : ""} ${size ? `[${size}]` : ""}`.trim(),
             url: finalUrl,
-            source: "GDFlix" + label
+            quality: quality,
+            headers: { "Referer": url, "User-Agent": UA }
           }));
         }
       }
 
-      // CF backup: replace /file/ with /wfile/
+      // Cloudflare backup links
       try {
-        var cfUrl = url.replace("/file/", "/wfile/");
-        if (cfUrl !== url) {
-          var cfDoc = await doc(cfUrl);
-          var cfBtns = cfDoc.querySelectorAll("a.btn-success");
-          for (var ci = 0; ci < cfBtns.length; ci++) {
-            var cfHref = cfBtns[ci].getAttribute("href");
-            if (cfHref) {              var resolved = await resolveUrl(cfHref);
+        const cfTypes = ["1", "2"];
+        for (const t of cfTypes) {
+          const cfDoc = await loadDoc(`${url}?type=${t}`);
+          const cfLinks = cfDoc.querySelectorAll("a.btn-success");
+          for (const lnk of cfLinks) {
+            const cfHref = lnk.getAttribute("href");
+            if (cfHref) {              const resolved = await resolveFinalUrl(cfHref);
               if (resolved) {
-                streams.push(new StreamResult({
+                results.push(new StreamResult({
+                  source: "GDFlix [CF]",
+                  name: `GDFlix [CF] ${name ? `[${name}]` : ""}`,
                   url: resolved,
-                  source: "GDFlix[CF]"
+                  quality: quality,
+                  headers: { "Referer": url, "User-Agent": UA }
                 }));
               }
             }
           }
         }
       } catch (_) {}
-    } catch (_) {}
-  }
 
-  async function extractFastDL(url, streams) {
-    try {
-      var opts = {};
-      for (var k in HEADERS) opts[k] = HEADERS[k];
-      opts.allowRedirects = false;
-      var r = await http_get(url, opts);
-      var loc = r.headers && (r.headers["location"] || r.headers["Location"]);
-      if (loc) {
-        streams.push(new StreamResult({ url: loc, source: "FastDL" }));
-      }
-    } catch (_) {}
-  }
-
-  // Generic extractor - minimal StreamResult
-  async function loadGenericExtractor(url, streams) {
-    var hostname = new URL(url).hostname.toLowerCase();
-    
-    if (hostname.indexOf("pixeldrain") >= 0) {
-      var base = (url.match(/^https?:\/\/[^/]+/) || ["https://pixeldrain.com"])[0];
-      var final = url.indexOf("download") >= 0 ? url : base + "/api/file/" + url.split("/").pop() + "?download";
-      streams.push(new StreamResult({ url: final, source: "Pixeldrain" }));
-    } else if (hostname.indexOf("gofile") >= 0) {
-      streams.push(new StreamResult({ url: url, source: "Gofile" }));
-    } else {
-      // Passthrough for SkyStream built-in extractor handling
-      streams.push(new StreamResult({ url: url, source: "Generic" }));
+      return results;
+    } catch (_) {
+      return [];
     }
   }
 
-  // === CORE FUNCTIONS - LIBRARY (getHome/search/load) PRESERVED ===
+  async function extractFastDLServer(url) {
+    try {
+      const res = await request(url, {}, false);
+      const location = res.headers?.["location"] || res.headers?.["Location"];
+      if (location) {
+        return await loadGenericExtractor(location);
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  async function loadGenericExtractor(url) {
+    const hostname = new URL(url).hostname.toLowerCase();
+    
+    if (hostname.includes("pixeldrain")) {
+      const base = url.match(/^https?:\/\/[^/]+/)?.[0] || "https://pixeldrain.com";
+      const finalUrl = url.includes("download") ? url : `${base}/api/file/${url.split("/").pop()}?download`;
+      return [new StreamResult({
+        source: "Pixeldrain",
+        url: finalUrl,
+        headers: { "Referer": url, "User-Agent": UA }
+      })];
+    }
+
+    if (hostname.includes("gofile")) {
+      return [new StreamResult({
+        source: "Gofile",
+        url: url,
+        headers: { "Referer": url, "User-Agent": UA }      })];
+    }
+
+    return [new StreamResult({
+      source: "Generic",
+      url: url,
+      headers: { "Referer": url, "User-Agent": UA }
+    })];
+  }
+
+  // === CORE FUNCTIONS ===
 
   async function getHome(cb) {
     try {
-      var sections = [
+      const sections = [
         { name: "Trending", path: "" },
-        { name: "Bollywood Movies", path: "/movies/bollywood/" },        { name: "Hollywood Movies", path: "/movies/hollywood/" },
+        { name: "Bollywood Movies", path: "/movies/bollywood/" },
+        { name: "Hollywood Movies", path: "/movies/hollywood/" },
         { name: "Anime", path: "/anime/" }
       ];
-      var data = {};
 
-      for (var si = 0; si < sections.length; si++) {
-        var sec = sections[si];
+      const data = {};
+
+      for (const section of sections) {
         try {
-          var url = sec.path ? manifest.baseUrl + sec.path : manifest.baseUrl;
-          var d = await doc(url);
-          var articles = d.querySelectorAll("div.post-cards > article");
-          var items = [];
-          for (var ai = 0; ai < articles.length; ai++) {
-            var el = articles[ai];
-            var a = el.querySelector("a");
-            if (!a) continue;
-            var title = clean(a.getAttribute("title"));
-            var href = normUrl(a.getAttribute("href"), manifest.baseUrl);
-            var img = el.querySelector("img");
-            var poster = img ? normUrl(img.getAttribute("src"), manifest.baseUrl) : "";
-            if (!title || !href) continue;
-            items.push(new MultimediaItem({ title: title, url: href, posterUrl: poster, type: "movie", contentType: "movie" }));
+          const url = section.path ? `${manifest.baseUrl}${section.path}` : manifest.baseUrl;
+          const doc = await loadDoc(url);
+          
+          const items = Array.from(doc.querySelectorAll("div.post-cards > article"))
+            .map(el => {
+              const anchor = el.querySelector("a");
+              if (!anchor) return null;
+              
+              const title = cleanTitle(anchor.getAttribute("title"));
+              const href = normalizeUrl(anchor.getAttribute("href"), manifest.baseUrl);
+              const poster = normalizeUrl(el.querySelector("img")?.getAttribute("src"), manifest.baseUrl);
+              
+              if (!title || !href) return null;
+              
+              return new MultimediaItem({
+                title: title,
+                url: href,
+                posterUrl: poster,
+                type: "movie",
+                contentType: "movie"
+              });
+            })
+            .filter(Boolean);
+
+          if (items.length > 0) {            data[section.name] = uniqueByUrl(items).slice(0, 30);
           }
-          if (items.length > 0) data[sec.name] = dedupe(items).slice(0, 30);
-        } catch (e) { data[sec.name] = []; }
+        } catch (err) {
+          console.error(`Error loading section ${section.name}:`, err);
+          data[section.name] = [];
+        }
       }
+
       cb({ success: true, data: data });
-    } catch (e) { cb({ success: false, errorCode: "HOME_ERROR", message: String(e) }); }
+    } catch (e) {
+      cb({ success: false, errorCode: "HOME_ERROR", message: String(e?.message || e) });
+    }
   }
 
   async function search(query, cb) {
     try {
-      var q = encodeURIComponent(String(query || "").trim());
-      var url = manifest.baseUrl + "/search/" + q + "/page/1/";
-      var d = await doc(url);
-      var articles = d.querySelectorAll("div.post-cards > article");
-      var results = [];
-      for (var ai = 0; ai < articles.length; ai++) {
-        var el = articles[ai];
-        var a = el.querySelector("a");
-        if (!a) continue;
-        var title = clean(a.getAttribute("title"));
-        var href = normUrl(a.getAttribute("href"), manifest.baseUrl);
-        var img = el.querySelector("img");
-        var poster = img ? normUrl(img.getAttribute("src"), manifest.baseUrl) : "";
-        if (!title || !href) continue;
-        results.push(new MultimediaItem({ title: title, url: href, posterUrl: poster, type: "movie", contentType: "movie" }));
-      }
-      cb({ success: true, data: dedupe(results).slice(0, 40) });
-    } catch (e) { cb({ success: false, errorCode: "SEARCH_ERROR", message: String(e) }); }  }
+      const q = encodeURIComponent(String(query || "").trim());
+      const page = 1;
+      const url = `${manifest.baseUrl}/search/${q}/page/${page}/`;
+      
+      const doc = await loadDoc(url);
+      const results = Array.from(doc.querySelectorAll("div.post-cards > article"))
+        .map(el => {
+          const anchor = el.querySelector("a");
+          if (!anchor) return null;
+          
+          const title = cleanTitle(anchor.getAttribute("title"));
+          const href = normalizeUrl(anchor.getAttribute("href"), manifest.baseUrl);
+          const poster = normalizeUrl(el.querySelector("img")?.getAttribute("src"), manifest.baseUrl);
+          
+          if (!title || !href) return null;
+          
+          return new MultimediaItem({
+            title: title,
+            url: href,
+            posterUrl: poster,
+            type: "movie",
+            contentType: "movie"
+          });
+        })
+        .filter(Boolean);
+
+      cb({ success: true, data: uniqueByUrl(results).slice(0, 40) });
+    } catch (e) {
+      cb({ success: false, errorCode: "SEARCH_ERROR", message: String(e?.message || e) });
+    }
+  }
 
   async function load(url, cb) {
-    try {
-      var d = await doc(url);
-      var titleEl = d.querySelector("title");
-      var title = clean(titleEl ? titleEl.textContent : "");
-      var ogImg = d.querySelector("meta[property='og:image']");
-      var poster = ogImg ? normUrl(ogImg.getAttribute("content"), manifest.baseUrl) : "";
-      var summary = d.querySelector("span#summary");
-      var desc = summary ? text(summary) : "";
-      var isSer = isSeries(url) || /series|web-series/i.test(title);
-
-      var imdbA = d.querySelector("div.imdb_left > a");
-      var imdbUrl = imdbA ? imdbA.getAttribute("href") : "";
-      var cm = null;
+    try {      const doc = await loadDoc(url);
+      
+      let title = cleanTitle(doc.querySelector("title")?.textContent);
+      let posterUrl = normalizeUrl(doc.querySelector("meta[property='og:image']")?.getAttribute("content"), manifest.baseUrl);
+      let description = doc.querySelector("span#summary")?.textContent?.trim() || "";
+      
+      const isSeries = isSeriesUrl(url) || /series|web-series/i.test(title);
+      const contentType = isSeries ? "series" : "movie";
+      
+      const imdbAnchor = doc.querySelector("div.imdb_left > a");
+      const imdbUrl = imdbAnchor?.getAttribute("href");
+      let cinemetaData = null;
+      
       if (imdbUrl) {
-        var parts = imdbUrl.split("title/");
-        if (parts.length > 1) {
-          var id = parts[1].split("/")[0];
-          if (id) cm = await cinemeta(isSer ? "tv" : "movie", id);
+        const imdbId = imdbUrl.split("title/")?.[1]?.split("/")?.[0];
+        if (imdbId) {
+          cinemetaData = await fetchCinemetaData(contentType === "series" ? "tv" : "movie", imdbId);
         }
       }
-
-      if (cm && cm.meta) {
-        var m = cm.meta;
-        title = m.name || title;
-        desc = m.description || desc;
-        poster = m.poster || poster;
-        var bg = m.background || poster;
-        var genres = m.genre || [];
-        var cast = m.cast || [];
-        var rating = m.imdbRating || "";
-        var year = m.year ? parseInt(m.year) : null;
-        var actors = [];
-        for (var ci = 0; ci < cast.length; ci++) {
-          var c = cast[ci];
-          var profilePath = c.profile_path || "";
-          actors.push(new Actor({
-            name: c.name || c,
-            role: c.role || c.character || "",
-            image: c.image || (profilePath ? "https://image.tmdb.org/t/p/w500" + profilePath : null)
-          }));
-        }
-
-        if (isSer) {
-          var epMap = new Map();
-          var buttons = d.querySelectorAll("a.maxbutton-download-links, a.dl, a.btnn");
+      
+      if (cinemetaData?.meta) {
+        const meta = cinemetaData.meta;
+        title = meta.name || title;
+        description = meta.description || description;
+        posterUrl = meta.poster || posterUrl;
+        const bgPoster = meta.background || posterUrl;
+        const genres = meta.genre || [];
+        const cast = meta.cast || [];
+        const imdbRating = meta.imdbRating || "";
+        const year = meta.year ? parseInt(meta.year) : null;
+        
+        const actors = cast.map(c => new Actor({
+          name: c.name || c,
+          role: c.role || c.character || "",
+          image: c.image || c.profile_path ? `https://image.tmdb.org/t/p/w500${c.profile_path}` : null
+        }));
+        
+        if (isSeries) {
+          const episodesMap = new Map();
+          const buttons = doc.querySelectorAll("a.maxbutton-download-links, a.dl, a.btnn");
           
-          for (var bi = 0; bi < buttons.length; bi++) {            var btn = buttons[bi];
-            var link = btn.getAttribute("href");
+          for (const btn of buttons) {
+            let link = btn.getAttribute("href");
             if (!link) continue;
-            if (link.indexOf("id=") >= 0) {
-              var id = link.split("id=").pop();
-              var bypassed = await bypass(id);
-              if (bypassed) link = bypassed;
+            
+            if (link.includes("id=")) {
+              const id = link.split("id=").pop();
+              link = await bypassProtectedLink(id) || link;
             }
-            var parent = btn.parentElement;
-            var prevSibling = parent ? parent.previousElementSibling : null;
-            var seasonText = prevSibling ? text(prevSibling) : "";
-            var seasonMatch = seasonText.match(/(?:Season|S)(\d+)/i);
-            var seasonNum = seasonMatch ? parseInt(seasonMatch[1]) : 1;
+                        const seasonText = btn.parentElement?.previousElementSibling?.textContent || "";
+            const seasonMatch = seasonText.match(/(?:Season|S)(\d+)/i);
+            const seasonNum = seasonMatch ? parseInt(seasonMatch[1]) : 1;
             
             try {
-              var seasonDoc = await doc(link);
-              var epLinks = seasonDoc.querySelectorAll("h3 > a");
-              var epNum = 1;
-              for (var ei = 0; ei < epLinks.length; ei++) {
-                var epA = epLinks[ei];
-                if (text(epA).toLowerCase().indexOf("zip") >= 0) continue;
-                var epUrl = epA.getAttribute("href");
+              const seasonDoc = await loadDoc(link);
+              const epLinks = seasonDoc.querySelectorAll("h3 > a")
+                .filter(a => !a.textContent.toLowerCase().includes("zip"));
+              
+              let epNum = 1;
+              for (const epAnchor of epLinks) {
+                const epUrl = epAnchor.getAttribute("href");
                 if (!epUrl) continue;
-                var videos = cm.meta.videos || [];
-                var epInfo = null;
-                for (var vi = 0; vi < videos.length; vi++) {
-                  var v = videos[vi];
-                  if (v.season === seasonNum && v.episode === epNum) {
-                    epInfo = v;
-                    break;
-                  }
-                }
-                var epData = {
+                
+                const epInfo = cinemetaData.meta?.videos?.find(v => 
+                  v.season === seasonNum && v.episode === epNum
+                );
+                
+                const epData = {
                   url: epUrl,
-                  name: (epInfo && epInfo.name) || (epInfo && epInfo.title) || "Episode " + epNum,
+                  name: epInfo?.name || epInfo?.title || `Episode ${epNum}`,
                   season: seasonNum,
                   episode: epNum,
-                  poster: (epInfo && epInfo.thumbnail) || poster,
-                  desc: (epInfo && epInfo.overview) || ""
+                  posterUrl: epInfo?.thumbnail || posterUrl,
+                  description: epInfo?.overview || ""
                 };
-                if (!epMap.has(seasonNum)) epMap.set(seasonNum, new Map());
-                epMap.get(seasonNum).set(epNum, epData);
+                
+                if (!episodesMap.has(seasonNum)) {
+                  episodesMap.set(seasonNum, new Map());
+                }
+                episodesMap.get(seasonNum).set(epNum, epData);
                 epNum++;
               }
             } catch (_) {}
           }
           
-          var episodes = [];
-          var seasons = Array.from(epMap.keys()).sort(function(a, b) { return a - b; });
-          for (var sni = 0; sni < seasons.length; sni++) {            var season = seasons[sni];
-            var eps = epMap.get(season);
-            var epNums = Array.from(eps.keys()).sort(function(a, b) { return a - b; });
-            for (var eni = 0; eni < epNums.length; eni++) {
-              var epNum = epNums[eni];
-              var ep = eps.get(epNum);
-              // CRITICAL: Episode URL = simple JSON object { url: ... }
+          const episodes = [];
+          for (const [season, eps] of episodesMap) {
+            for (const [epNum, epData] of eps) {
               episodes.push(new Episode({
-                name: ep.name,
-                url: JSON.stringify({ url: ep.url }),
-                season: ep.season,
-                episode: ep.episode,
-                posterUrl: ep.poster,
-                description: ep.desc
+                name: epData.name,
+                url: JSON.stringify([{ url: epData.url, source: "primary" }]),
+                season: season,
+                episode: epNum,
+                posterUrl: epData.posterUrl,
+                description: epData.description
               }));
             }
           }
+                    episodes.sort((a, b) => (a.season - b.season) || (a.episode - b.episode));
           
-          var fallbackEp = new Episode({
-            name: title,
-            url: JSON.stringify({ url: url }),
-            season: 1,
-            episode: 1,
-            posterUrl: poster
-          });
-          
-          var item = new MultimediaItem({
+          const item = new MultimediaItem({
             title: title,
             url: url,
-            posterUrl: poster,
-            bannerUrl: bg,
-            description: desc,
+            posterUrl: posterUrl,
+            bannerUrl: bgPoster,
+            description: description,
             year: year,
-            score: rating ? parseFloat(rating) * 10 : null,
+            score: imdbRating ? parseFloat(imdbRating) * 10 : null,
             tags: genres,
             cast: actors,
             type: "series",
             contentType: "series",
-            episodes: episodes.length > 0 ? episodes : [fallbackEp]
+            episodes: episodes.length > 0 ? episodes : [new Episode({
+              name: title,
+              url: JSON.stringify([{ url: url, source: "primary" }]),
+              season: 1,
+              episode: 1,
+              posterUrl: posterUrl
+            })]
           });
+          
           cb({ success: true, data: item });
           return;
         } else {
-          var sources = [];
-          var buttons = d.querySelectorAll("a.dl");
-          for (var bi = 0; bi < buttons.length; bi++) {
-            var btn = buttons[bi];
-            var link = btn.getAttribute("href");
+          const sources = [];
+          const buttons = doc.querySelectorAll("a.dl");
+          
+          for (const btn of buttons) {
+            let link = btn.getAttribute("href");
             if (!link) continue;
-            if (link.indexOf("id=") >= 0) {              var id = link.split("id=").pop();
-              var bypassed = await bypass(id);
-              if (bypassed) link = bypassed;
+            
+            if (link.includes("id=")) {
+              const id = link.split("id=").pop();
+              link = await bypassProtectedLink(id) || link;
             }
-            sources.push({ url: link });
+            sources.push({ url: link, source: "primary" });
           }
-          var firstUrl = sources.length > 0 && sources[0].url ? sources[0].url : url;
-          var item = new MultimediaItem({
+          
+          const item = new MultimediaItem({
             title: title,
             url: url,
-            posterUrl: poster,
-            bannerUrl: bg,
-            description: desc,
+            posterUrl: posterUrl,
+            bannerUrl: bgPoster,
+            description: description,
             year: year,
-            score: rating ? parseFloat(rating) * 10 : null,
+            score: imdbRating ? parseFloat(imdbRating) * 10 : null,
             tags: genres,
-            cast: actors,
-            type: "movie",
+            cast: actors,            type: "movie",
             contentType: "movie",
             episodes: [new Episode({
               name: title,
-              url: JSON.stringify({ url: firstUrl }),
+              url: JSON.stringify(sources),
               season: 1,
               episode: 1,
-              posterUrl: poster
+              posterUrl: posterUrl
             })]
           });
+          
           cb({ success: true, data: item });
           return;
         }
       }
       
       // Fallback without Cinemeta
-      if (isSer) {
-        var episodes = [];
-        var buttons = d.querySelectorAll("a.maxbutton-download-links, a.dl, a.btnn");
-        var epNum = 1;
-        for (var bi = 0; bi < buttons.length; bi++) {
-          var btn = buttons[bi];
-          var link = btn.getAttribute("href");
+      if (isSeries) {
+        const episodes = [];
+        const buttons = doc.querySelectorAll("a.maxbutton-download-links, a.dl, a.btnn");
+        let epNum = 1;
+        
+        for (const btn of buttons) {
+          let link = btn.getAttribute("href");
           if (!link) continue;
-          if (link.indexOf("id=") >= 0) {
-            var id = link.split("id=").pop();
-            var bypassed = await bypass(id);
-            if (bypassed) link = bypassed;
+          
+          if (link.includes("id=")) {
+            const id = link.split("id=").pop();
+            link = await bypassProtectedLink(id) || link;
           }
-          var parent = btn.parentElement;
-          var prevSibling = parent ? parent.previousElementSibling : null;
-          var seasonText = prevSibling ? text(prevSibling) : "";
-          var seasonMatch = seasonText.match(/(?:Season|S)(\d+)/i);          var seasonNum = seasonMatch ? parseInt(seasonMatch[1]) : 1;
+          
+          const seasonText = btn.parentElement?.previousElementSibling?.textContent || "";
+          const seasonMatch = seasonText.match(/(?:Season|S)(\d+)/i);
+          const seasonNum = seasonMatch ? parseInt(seasonMatch[1]) : 1;
+          
           episodes.push(new Episode({
-            name: "Episode " + epNum,
-            url: JSON.stringify({ url: link }),
+            name: `Episode ${epNum}`,
+            url: JSON.stringify([{ url: link, source: "primary" }]),
             season: seasonNum,
             episode: epNum,
-            posterUrl: poster
+            posterUrl: posterUrl
           }));
           epNum++;
         }
-        var fallbackEp = new Episode({
-          name: title,
-          url: JSON.stringify({ url: url }),
-          season: 1,
-          episode: 1,
-          posterUrl: poster
-        });
-        var item = new MultimediaItem({
+        
+        const item = new MultimediaItem({
           title: title,
           url: url,
-          posterUrl: poster,
-          description: desc,
-          type: "series",
+          posterUrl: posterUrl,
+          description: description,          type: "series",
           contentType: "series",
-          episodes: episodes.length > 0 ? episodes : [fallbackEp]
-        });
-        cb({ success: true, data: item });
-      } else {
-        var sources = [];
-        var buttons = d.querySelectorAll("a.dl");
-        for (var bi = 0; bi < buttons.length; bi++) {
-          var btn = buttons[bi];
-          var link = btn.getAttribute("href");
-          if (!link) continue;
-          if (link.indexOf("id=") >= 0) {
-            var id = link.split("id=").pop();
-            var bypassed = await bypass(id);
-            if (bypassed) link = bypassed;
-          }
-          sources.push({ url: link });
-        }
-        var firstUrl = sources.length > 0 && sources[0].url ? sources[0].url : url;
-        var item = new MultimediaItem({
-          title: title,
-          url: url,
-          posterUrl: poster,
-          description: desc,
-          type: "movie",
-          contentType: "movie",
-          episodes: [new Episode({            name: title,
-            url: JSON.stringify({ url: firstUrl }),
+          episodes: episodes.length > 0 ? episodes : [new Episode({
+            name: title,
+            url: JSON.stringify([{ url: url, source: "primary" }]),
             season: 1,
             episode: 1,
-            posterUrl: poster
+            posterUrl: posterUrl
           })]
         });
+        
+        cb({ success: true, data: item });
+      } else {
+        const sources = [];
+        const buttons = doc.querySelectorAll("a.dl");
+        for (const btn of buttons) {
+          let link = btn.getAttribute("href");
+          if (!link) continue;
+          if (link.includes("id=")) {
+            const id = link.split("id=").pop();
+            link = await bypassProtectedLink(id) || link;
+          }
+          sources.push({ url: link, source: "primary" });
+        }
+        
+        const item = new MultimediaItem({
+          title: title,
+          url: url,
+          posterUrl: posterUrl,
+          description: description,
+          type: "movie",
+          contentType: "movie",
+          episodes: [new Episode({
+            name: title,
+            url: JSON.stringify(sources),
+            season: 1,
+            episode: 1,
+            posterUrl: posterUrl
+          })]
+        });
+        
         cb({ success: true, data: item });
       }
-    } catch (e) { cb({ success: false, errorCode: "LOAD_ERROR", message: String(e) }); }
+    } catch (e) {
+      cb({ success: false, errorCode: "LOAD_ERROR", message: String(e?.message || e) });
+    }
   }
 
-  // === loadStreams - FIXED: Exact working plugin pattern ===
   async function loadStreams(data, cb) {
-    try {
-      // Parse episode URL - CRITICAL: Handle simple {url} format
-      var url = null;
+    try {      let sources = [];
       if (typeof data === "string") {
         try {
-          var parsed = JSON.parse(data);
-          if (Array.isArray(parsed)) {
-            var first = parsed[0];
-            url = (first && first.url) ? first.url : first;
-          } else if (parsed && parsed.url) {
-            url = parsed.url;
-          } else {
-            url = parsed;
-          }
-        } catch(_) { url = data; }
+          sources = JSON.parse(data);
+        } catch (_) {
+          sources = [{ url: data, source: "primary" }];
+        }
       } else if (Array.isArray(data)) {
-        var first = data[0];
-        url = (first && first.url) ? first.url : first;
-      } else if (data && data.url) {
-        url = data.url;
+        sources = data;
+      } else if (data?.url) {
+        sources = typeof data.url === "string" && data.url.startsWith("[") 
+          ? JSON.parse(data.url) 
+          : [{ url: data.url, source: "primary" }];
       }
       
-      if (!url) return cb({ success: true, data: [] });
-      
-      var streams = [];
-      var srcStr = String(url).toLowerCase();
-      
-      // CRITICAL: Extractors push to streams array (passed by reference)
-      if (srcStr.indexOf("gdflix") >= 0 || srcStr.indexOf("gdlink") >= 0) {
-        await extractGDFlix(url, streams);
-      } else if (srcStr.indexOf("fastdlserver") >= 0) {
-        await extractFastDL(url, streams);
-      } else {
-        await loadGenericExtractor(url, streams);
+      if (!sources || sources.length === 0) {
+        return cb({ success: true, data: [] });
       }
-            // Deduplicate streams by URL
-      var seen = new Set();
-      var results = [];
-      for (var i = 0; i < streams.length; i++) {
-        var s = streams[i];
-        if (!s || !s.url || seen.has(s.url)) continue;
-        seen.add(s.url);
-        results.push(s);
+      
+      const results = [];
+      const seen = new Set();
+      
+      for (const src of sources) {
+        const url = src.url || src;
+        if (!url || seen.has(url)) continue;
+        seen.add(url);
+        
+        const hostname = new URL(url).hostname.toLowerCase();
+        let streams = [];
+        
+        if (hostname.includes("gdflix") || hostname.includes("gdlink")) {
+          streams = await extractGDFlix(url, src.name || "", src.size || "");
+        } else if (hostname.includes("fastdlserver")) {
+          streams = await extractFastDLServer(url);
+        } else {
+          streams = await loadGenericExtractor(url);
+        }
+        
+        for (const stream of streams) {
+          if (!seen.has(stream.url)) {
+            seen.add(stream.url);
+            results.push(stream);
+          }
+        }
       }
       
       cb({ success: true, data: results });
-    } catch (e) { cb({ success: false, errorCode: "STREAM_ERROR", message: String(e) }); }
-  }
+    } catch (e) {
+      cb({ success: false, errorCode: "STREAM_ERROR", message: String(e?.message || e) });
+    }  }
 
-  // === EXPORTS ===
+  // === EXPORT CORE FUNCTIONS ===
   globalThis.getHome = getHome;
   globalThis.search = search;
   globalThis.load = load;
