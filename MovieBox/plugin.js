@@ -1,13 +1,15 @@
 (function() {
   /**
    * BollyFlix - SkyStream Plugin
-   * ES5-compatible, syntax-safe version
+   * Library functions preserved. loadStreams fixed for working stream URLs.
+   * Exact patterns from working SkyStream plugins.
    */
 
   const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36";
   const CINEMETA = "https://aiometadata.elfhosted.com/stremio/9197a4a9-2f5b-4911-845e-8704c520bdf7/meta";
   const UTILS = "https://raw.githubusercontent.com/SaurabhKaperwan/Utils/refs/heads/main/urls.json";
 
+  // CRITICAL: Headers passed DIRECTLY to http_get, not nested in { headers: {} }
   const HEADERS = {
     "User-Agent": UA,
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -45,8 +47,8 @@
     if (s.indexOf("720") >= 0 || s.indexOf("hd") >= 0) return "720p";
     if (s.indexOf("480") >= 0 || s.indexOf("sd") >= 0) return "480p";
     if (s.indexOf("cam") >= 0) return "CAM";
-    return "Auto";
-  }
+    return "Auto";  }
+
   function isSeries(u) { return /series|web-series|season/i.test(String(u)); }
   
   function dedupe(arr) {
@@ -82,21 +84,21 @@
     return htmlDec((el && el.textContent ? el.textContent : "").replace(/\s+/g, " ").trim());
   }
 
-  // === NETWORK ===
+  // === NETWORK - CRITICAL: Headers passed directly ===
   async function req(u, h) {
     h = h || {};
     var headers = {};
     for (var k in HEADERS) headers[k] = HEADERS[k];
     for (var k in h) headers[k] = h[k];
-    return await http_get(u, headers);
+    return await http_get(u, headers);  // ← Headers direct, NOT { headers: {...} }
   }
 
   function isCF(r, url) {
     var b = String(r && r.body ? r.body : "").toLowerCase();
     var titleMatch = b.match(/<title>([^<]*)</i);
-    var t = (titleMatch && titleMatch[1] ? titleMatch[1] : "").toLowerCase();
-    return (/cloudflare/.test(b) && /attention|verify|just a moment|cf-/i.test(b)) || t.indexOf("just a moment") >= 0;
+    var t = (titleMatch && titleMatch[1] ? titleMatch[1] : "").toLowerCase();    return (/cloudflare/.test(b) && /attention|verify|just a moment|cf-/i.test(b)) || t.indexOf("just a moment") >= 0;
   }
+
   async function doc(u, h) {
     h = h || {};
     var r = await req(u, h);
@@ -143,9 +145,9 @@
   async function resolveUrl(u, max) {
     max = max || 7;
     var cur = u;
-    for (var i = 0; i < max; i++) {
-      try {
-        var opts = {};        for (var k in HEADERS) opts[k] = HEADERS[k];
+    for (var i = 0; i < max; i++) {      try {
+        var opts = {};
+        for (var k in HEADERS) opts[k] = HEADERS[k];
         opts.allowRedirects = false;
         var r = await http_get(cur, opts);
         if (r.code === 200) break;
@@ -159,7 +161,8 @@
     return cur;
   }
 
-  // === EXTRACTORS ===
+  // === EXTRACTORS - Push to array, minimal StreamResult ===
+  
   async function extractGDFlix(url, streams) {
     try {
       var baseUrl = (url.match(/^https?:\/\/[^/]+/) || [""])[0];
@@ -191,10 +194,10 @@
           label = "[FSL V2]";
         } else if (txt.indexOf("direct dl") >= 0 || txt.indexOf("direct server") >= 0) {
           label = "[Direct]";
-        } else if (txt.indexOf("cloud download") >= 0 && txt.indexOf("r2") >= 0) {
-          label = "[Cloud]";
+        } else if (txt.indexOf("cloud download") >= 0 && txt.indexOf("r2") >= 0) {          label = "[Cloud]";
         } else if (txt.indexOf("fast cloud") >= 0) {
-          try {            var nested = await doc(baseUrl + href);
+          try {
+            var nested = await doc(baseUrl + href);
             var dlink = nested.querySelector("div.card-body a");
             if (!dlink) continue;
             finalUrl = dlink.getAttribute("href");
@@ -216,23 +219,23 @@
             else continue;
           } catch (_) { continue; }
         } else if (txt.indexOf("gofile") >= 0) {
-          streams.push(new StreamResult({ url: href, source: "Gofile", quality: quality, headers: { "Referer": url, "User-Agent": UA } }));
+          // Fallback: push as-is for SkyStream built-in GoFile support
+          streams.push(new StreamResult({ url: href, source: "Gofile" }));
           continue;
         } else {
           continue;
         }
 
         if (finalUrl && finalUrl.indexOf("http") === 0) {
+          // CRITICAL: Minimal StreamResult - only url + source required
           streams.push(new StreamResult({
             url: finalUrl,
-            source: "GDFlix" + label,
-            quality: quality,
-            headers: { "Referer": url, "User-Agent": UA }
+            source: "GDFlix" + label
           }));
         }
       }
 
-      // CF backup
+      // CF backup: replace /file/ with /wfile/
       try {
         var cfUrl = url.replace("/file/", "/wfile/");
         if (cfUrl !== url) {
@@ -240,13 +243,11 @@
           var cfBtns = cfDoc.querySelectorAll("a.btn-success");
           for (var ci = 0; ci < cfBtns.length; ci++) {
             var cfHref = cfBtns[ci].getAttribute("href");
-            if (cfHref) {
-              var resolved = await resolveUrl(cfHref);
+            if (cfHref) {              var resolved = await resolveUrl(cfHref);
               if (resolved) {
-                streams.push(new StreamResult({                  url: resolved,
-                  source: "GDFlix[CF]",
-                  quality: quality,
-                  headers: { "Referer": url, "User-Agent": UA }
+                streams.push(new StreamResult({
+                  url: resolved,
+                  source: "GDFlix[CF]"
                 }));
               }
             }
@@ -264,35 +265,37 @@
       var r = await http_get(url, opts);
       var loc = r.headers && (r.headers["location"] || r.headers["Location"]);
       if (loc) {
-        streams.push(new StreamResult({ url: loc, source: "FastDL", headers: { "Referer": url, "User-Agent": UA } }));
+        streams.push(new StreamResult({ url: loc, source: "FastDL" }));
       }
     } catch (_) {}
   }
 
+  // Generic extractor - minimal StreamResult
   async function loadGenericExtractor(url, streams) {
     var hostname = new URL(url).hostname.toLowerCase();
     
     if (hostname.indexOf("pixeldrain") >= 0) {
       var base = (url.match(/^https?:\/\/[^/]+/) || ["https://pixeldrain.com"])[0];
       var final = url.indexOf("download") >= 0 ? url : base + "/api/file/" + url.split("/").pop() + "?download";
-      streams.push(new StreamResult({ url: final, source: "Pixeldrain", headers: { "Referer": url, "User-Agent": UA } }));
+      streams.push(new StreamResult({ url: final, source: "Pixeldrain" }));
     } else if (hostname.indexOf("gofile") >= 0) {
-      streams.push(new StreamResult({ url: url, source: "Gofile", headers: { "Referer": url, "User-Agent": UA } }));
+      streams.push(new StreamResult({ url: url, source: "Gofile" }));
     } else {
-      streams.push(new StreamResult({ url: url, source: "Generic", headers: { "Referer": url, "User-Agent": UA } }));
+      // Passthrough for SkyStream built-in extractor handling
+      streams.push(new StreamResult({ url: url, source: "Generic" }));
     }
   }
 
-  // === CORE FUNCTIONS ===
+  // === CORE FUNCTIONS - LIBRARY (getHome/search/load) PRESERVED ===
 
   async function getHome(cb) {
     try {
       var sections = [
         { name: "Trending", path: "" },
-        { name: "Bollywood Movies", path: "/movies/bollywood/" },
-        { name: "Hollywood Movies", path: "/movies/hollywood/" },
+        { name: "Bollywood Movies", path: "/movies/bollywood/" },        { name: "Hollywood Movies", path: "/movies/hollywood/" },
         { name: "Anime", path: "/anime/" }
-      ];      var data = {};
+      ];
+      var data = {};
 
       for (var si = 0; si < sections.length; si++) {
         var sec = sections[si];
@@ -338,10 +341,10 @@
         results.push(new MultimediaItem({ title: title, url: href, posterUrl: poster, type: "movie", contentType: "movie" }));
       }
       cb({ success: true, data: dedupe(results).slice(0, 40) });
-    } catch (e) { cb({ success: false, errorCode: "SEARCH_ERROR", message: String(e) }); }
-  }
+    } catch (e) { cb({ success: false, errorCode: "SEARCH_ERROR", message: String(e) }); }  }
 
-  async function load(url, cb) {    try {
+  async function load(url, cb) {
+    try {
       var d = await doc(url);
       var titleEl = d.querySelector("title");
       var title = clean(titleEl ? titleEl.textContent : "");
@@ -387,10 +390,10 @@
           var epMap = new Map();
           var buttons = d.querySelectorAll("a.maxbutton-download-links, a.dl, a.btnn");
           
-          for (var bi = 0; bi < buttons.length; bi++) {
-            var btn = buttons[bi];
+          for (var bi = 0; bi < buttons.length; bi++) {            var btn = buttons[bi];
             var link = btn.getAttribute("href");
-            if (!link) continue;            if (link.indexOf("id=") >= 0) {
+            if (!link) continue;
+            if (link.indexOf("id=") >= 0) {
               var id = link.split("id=").pop();
               var bypassed = await bypass(id);
               if (bypassed) link = bypassed;
@@ -436,12 +439,13 @@
           
           var episodes = [];
           var seasons = Array.from(epMap.keys()).sort(function(a, b) { return a - b; });
-          for (var sni = 0; sni < seasons.length; sni++) {
-            var season = seasons[sni];
+          for (var sni = 0; sni < seasons.length; sni++) {            var season = seasons[sni];
             var eps = epMap.get(season);
-            var epNums = Array.from(eps.keys()).sort(function(a, b) { return a - b; });            for (var eni = 0; eni < epNums.length; eni++) {
+            var epNums = Array.from(eps.keys()).sort(function(a, b) { return a - b; });
+            for (var eni = 0; eni < epNums.length; eni++) {
               var epNum = epNums[eni];
               var ep = eps.get(epNum);
+              // CRITICAL: Episode URL = simple JSON object { url: ... }
               episodes.push(new Episode({
                 name: ep.name,
                 url: JSON.stringify({ url: ep.url }),
@@ -484,11 +488,11 @@
             var btn = buttons[bi];
             var link = btn.getAttribute("href");
             if (!link) continue;
-            if (link.indexOf("id=") >= 0) {
-              var id = link.split("id=").pop();
+            if (link.indexOf("id=") >= 0) {              var id = link.split("id=").pop();
               var bypassed = await bypass(id);
               if (bypassed) link = bypassed;
-            }            sources.push({ url: link });
+            }
+            sources.push({ url: link });
           }
           var firstUrl = sources.length > 0 && sources[0].url ? sources[0].url : url;
           var item = new MultimediaItem({
@@ -533,11 +537,11 @@
           var parent = btn.parentElement;
           var prevSibling = parent ? parent.previousElementSibling : null;
           var seasonText = prevSibling ? text(prevSibling) : "";
-          var seasonMatch = seasonText.match(/(?:Season|S)(\d+)/i);
-          var seasonNum = seasonMatch ? parseInt(seasonMatch[1]) : 1;
+          var seasonMatch = seasonText.match(/(?:Season|S)(\d+)/i);          var seasonNum = seasonMatch ? parseInt(seasonMatch[1]) : 1;
           episodes.push(new Episode({
             name: "Episode " + epNum,
-            url: JSON.stringify({ url: link }),            season: seasonNum,
+            url: JSON.stringify({ url: link }),
+            season: seasonNum,
             episode: epNum,
             posterUrl: poster
           }));
@@ -582,11 +586,11 @@
           description: desc,
           type: "movie",
           contentType: "movie",
-          episodes: [new Episode({
-            name: title,
+          episodes: [new Episode({            name: title,
             url: JSON.stringify({ url: firstUrl }),
             season: 1,
-            episode: 1,            posterUrl: poster
+            episode: 1,
+            posterUrl: poster
           })]
         });
         cb({ success: true, data: item });
@@ -594,8 +598,10 @@
     } catch (e) { cb({ success: false, errorCode: "LOAD_ERROR", message: String(e) }); }
   }
 
+  // === loadStreams - FIXED: Exact working plugin pattern ===
   async function loadStreams(data, cb) {
     try {
+      // Parse episode URL - CRITICAL: Handle simple {url} format
       var url = null;
       if (typeof data === "string") {
         try {
@@ -621,6 +627,7 @@
       var streams = [];
       var srcStr = String(url).toLowerCase();
       
+      // CRITICAL: Extractors push to streams array (passed by reference)
       if (srcStr.indexOf("gdflix") >= 0 || srcStr.indexOf("gdlink") >= 0) {
         await extractGDFlix(url, streams);
       } else if (srcStr.indexOf("fastdlserver") >= 0) {
@@ -628,14 +635,15 @@
       } else {
         await loadGenericExtractor(url, streams);
       }
-      
+            // Deduplicate streams by URL
       var seen = new Set();
       var results = [];
       for (var i = 0; i < streams.length; i++) {
         var s = streams[i];
         if (!s || !s.url || seen.has(s.url)) continue;
         seen.add(s.url);
-        results.push(s);      }
+        results.push(s);
+      }
       
       cb({ success: true, data: results });
     } catch (e) { cb({ success: false, errorCode: "STREAM_ERROR", message: String(e) }); }
