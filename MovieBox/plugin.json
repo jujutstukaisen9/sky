@@ -1,0 +1,12 @@
+{
+  "name": "Bollyflix",
+  "id": "bollyflix",
+  "version": "1.0.0",
+  "author": "SaurabhKaperwan",
+  "description": "Stream Bollywood, Hollywood, Anime and Web Series from Bollyflix",
+  "iconUrl": "https://bollyflix.frl/favicon.ico",
+  "baseUrl": "https://bollyflix.frl",
+  "language": "hi",
+  "types": ["movie", "series", "anime"],
+  "capabilities": ["search", "home", "load", "streams"]
+}
