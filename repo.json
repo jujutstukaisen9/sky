@@ -1,0 +1,9 @@
+{
+  "name": "testing-repo",
+  "packageName": "Testing",
+  "description": "SkyStream plugins repository",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/jujutstukaisen9/sky/main/dist/plugins.json"
+  ]
+}
