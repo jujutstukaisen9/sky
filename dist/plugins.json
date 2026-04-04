@@ -1,24 +1,24 @@
 [
   {
+    "packageName": "dev.akash.stars.animesalt",
     "name": "Bollyflix",
-    "id": "bollyflix",
-    "version": "1.0.0",
-    "author": "SaurabhKaperwan",
-    "description": "Stream Bollywood, Hollywood, Anime and Web Series from Bollyflix",
-    "iconUrl": "https://bollyflix.frl/favicon.ico",
+    "version": 1,
     "baseUrl": "https://bollyflix.frl",
-    "language": "hi",
-    "types": [
-      "movie",
-      "series",
-      "anime"
+    "description": "Port of CloudStream Animesalt extension",
+    "authors": [
+      "Akash"
     ],
-    "capabilities": [
-      "search",
-      "home",
-      "load",
-      "streams"
+    "languages": [
+      "hi",
+      "jp",
+      "en"
     ],
-    "url": "https://raw.githubusercontent.com/jujutstukaisen9/sky/main/dist/bollyflix.sky"
+    "categories": [
+      "Anime",
+      "Cartoon",
+      "Movie",
+      "Series"
+    ],
+    "url": "https://raw.githubusercontent.com/jujutstukaisen9/sky/main/dist/dev.akash.stars.animesalt.sky"
   }
 ]
