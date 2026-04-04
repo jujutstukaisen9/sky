@@ -30,10 +30,7 @@
 
   function cleanTitle(raw) {
     if (!raw) return "Unknown";
-    return String(raw)
-      .replace(/Download\s+/gi, "")
-      .replace(/\s+/g, " ")
-      .trim();
+    return String(raw).replace(/Download\s+/gi, "").replace(/\s+/g, " ").trim();
   }
 
   function extractQuality(text) {
@@ -48,9 +45,9 @@
     if (t.includes("cam")) return "CAM";
     return "Auto";
   }
+
   function isSeriesUrl(url) {
-    return /series|web-series|season/i.test(String(url));
-  }
+    return /series|web-series|season/i.test(String(url));  }
 
   function uniqueByUrl(items) {
     const out = [];
@@ -74,29 +71,58 @@
     }
   }
 
+  function htmlDecode(text) {
+    if (!text) return "";
+    return String(text)
+      .replace(/&/g, "&").replace(/"/g, '"').replace(/'/g, "'")
+      .replace(/</g, "<").replace(/>/g, ">")
+      .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code, 10)));
+  }
+
+  function textOf(el) {
+    return htmlDecode((el?.textContent || "").replace(/\s+/g, " ").trim());
+  }
+
+  function getAttr(el, ...attrs) {
+    if (!el) return "";
+    for (const attr of attrs) {
+      const v = el.getAttribute(attr);
+      if (v && String(v).trim()) return String(v).trim();
+    }
+    return "";
+  }
+
   // === NETWORK UTILS ===
 
-  async function request(url, headers = {}, allowRedirects = true) {
-    const opts = {
-      headers: { ...BASE_HEADERS, ...headers },
-      allowRedirects
-    };
-    return await http_get(url, opts);
+  async function request(url, headers = {}) {
+    return await http_get(url, { headers: { ...BASE_HEADERS, ...headers } });
+  }
+  function isCloudflareBlocked(response, targetUrl) {
+    const body = String(response?.body || "");
+    const headerServer = (response?.headers?.["server"] || "").toLowerCase();
+    const title = (body.match(/<title>([^<]*)</i)?.[1] || "").toLowerCase();
+    
+    if (/cloudflare/i.test(body) && /attention required|verify you are human|just a moment|cf-ray|cf-chl/i.test(body)) return true;
+    if (title.includes("just a moment") || title.includes("attention required")) return true;
+    if (headerServer.includes("cloudflare") && /checking your browser|verify you are human/i.test(body)) return true;
+    if (String(targetUrl || "").includes("/cdn-cgi/challenge-platform/")) return true;
+    return false;
   }
 
   async function loadDoc(url, headers = {}) {
     const res = await request(url, headers);
-    // Detect Cloudflare block
-    const body = String(res?.body || "");
-    if (/cloudflare|attention required|verify you are human|cf-ray/i.test(body)) {
-      throw new Error(`CLOUDFLARE_BLOCKED: ${url}`);
+    const finalUrl = String(res?.finalUrl || res?.url || url || "");
+    
+    if (isCloudflareBlocked(res, finalUrl)) {
+      throw new Error(`CLOUDFLARE_BLOCKED: ${finalUrl}`);
     }
     return await parseHtml(res.body);
   }
 
   async function fetchDynamicBaseUrl(source) {
     try {
-      const res = await request(UTILS_URL, {}, true);      const urls = JSON.parse(res.body);
+      const res = await request(UTILS_URL, {}, true);
+      const urls = JSON.parse(res.body);
       return urls?.[source]?.trim() || null;
     } catch (_) {
       return null;
@@ -119,8 +145,7 @@
     try {
       const url = `https://web.sidexfee.com/?id=${id}`;
       const res = await request(url, {}, true);
-      const body = String(res.body || "");
-      const match = body.match(/"link":"([^"]+)"/);
+      const body = String(res.body || "");      const match = body.match(/"link":"([^"]+)"/);
       if (match && match[1]) {
         return safeBase64Decode(match[1].replace(/\\\//g, "/"));
       }
@@ -145,13 +170,13 @@
         break;
       }
     }
-    return currentUrl;  }
+    return currentUrl;
+  }
 
   // === EXTRACTORS ===
 
   async function extractGDFlix(url, fileName = "", fileSize = "") {
     try {
-      // Resolve dynamic base URL
       let baseUrl = url.match(/^https?:\/\/[^/]+/)?.[0] || "";
       const dynamicBase = await fetchDynamicBaseUrl("gdflix");
       if (dynamicBase && baseUrl !== dynamicBase) {
@@ -169,8 +194,7 @@
 
       for (const btn of buttons) {
         const text = btn.textContent?.toLowerCase() || "";
-        const href = btn.getAttribute("href");
-        if (!href) continue;
+        const href = btn.getAttribute("href");        if (!href) continue;
 
         let label = "GDFlix";
         let finalUrl = href;
@@ -179,7 +203,6 @@
           label = "GDFlix [FSL V2]";
         } else if (text.includes("direct") || text.includes("instant")) {
           label = "GDFlix [Direct]";
-          // Resolve redirect
           if (text.includes("instant")) {
             const redir = await resolveFinalUrl(href);
             if (redir) finalUrl = redir;
@@ -187,16 +210,15 @@
         } else if (text.includes("cloud") || text.includes("r2")) {
           label = "GDFlix [Cloud]";
         } else if (text.includes("fast cloud")) {
-          // Nested resolution
           const nestedDoc = await loadDoc(`${baseUrl}${href}`);
           const nestedLink = nestedDoc.querySelector("div.card-body a")?.getAttribute("href");
           if (nestedLink) finalUrl = nestedLink;
           label = "GDFlix [FAST CLOUD]";
         } else if (href.includes("pixeldra")) {
           label = "GDFlix [Pixeldrain]";
-          const base = href.match(/^https?:\/\/[^/]+/)?.[0] || "https://pixeldrain.com";          finalUrl = href.includes("download") ? href : `${base}/api/file/${href.split("/").pop()}?download`;
+          const base = href.match(/^https?:\/\/[^/]+/)?.[0] || "https://pixeldrain.com";
+          finalUrl = href.includes("download") ? href : `${base}/api/file/${href.split("/").pop()}?download`;
         } else if (text.includes("gofile")) {
-          // Delegate to generic loader
           const delegated = await loadGenericExtractor(href);
           results.push(...delegated);
           continue;
@@ -221,8 +243,7 @@
           const cfLinks = cfDoc.querySelectorAll("a.btn-success");
           for (const lnk of cfLinks) {
             const cfHref = lnk.getAttribute("href");
-            if (cfHref) {
-              const resolved = await resolveFinalUrl(cfHref);
+            if (cfHref) {              const resolved = await resolveFinalUrl(cfHref);
               if (resolved) {
                 results.push(new StreamResult({
                   source: "GDFlix [CF]",
@@ -243,7 +264,8 @@
     }
   }
 
-  async function extractFastDLServer(url) {    try {
+  async function extractFastDLServer(url) {
+    try {
       const res = await request(url, {}, false);
       const location = res.headers?.["location"] || res.headers?.["Location"];
       if (location) {
@@ -254,10 +276,8 @@
   }
 
   async function loadGenericExtractor(url) {
-    // Generic passthrough for supported extractors
     const hostname = new URL(url).hostname.toLowerCase();
     
-    // Pixeldrain direct handling
     if (hostname.includes("pixeldrain")) {
       const base = url.match(/^https?:\/\/[^/]+/)?.[0] || "https://pixeldrain.com";
       const finalUrl = url.includes("download") ? url : `${base}/api/file/${url.split("/").pop()}?download`;
@@ -268,17 +288,13 @@
       })];
     }
 
-    // Gofile delegation (if supported by SkyStream core)
     if (hostname.includes("gofile")) {
-      // Note: SkyStream may have built-in Gofile support
       return [new StreamResult({
         source: "Gofile",
         url: url,
-        headers: { "Referer": url, "User-Agent": UA }
-      })];
+        headers: { "Referer": url, "User-Agent": UA }      })];
     }
 
-    // Default: return as-is for core extractor handling
     return [new StreamResult({
       source: "Generic",
       url: url,
@@ -292,7 +308,8 @@
     try {
       const sections = [
         { name: "Trending", path: "" },
-        { name: "Bollywood Movies", path: "/movies/bollywood/" },        { name: "Hollywood Movies", path: "/movies/hollywood/" },
+        { name: "Bollywood Movies", path: "/movies/bollywood/" },
+        { name: "Hollywood Movies", path: "/movies/hollywood/" },
         { name: "Anime", path: "/anime/" }
       ];
 
@@ -324,8 +341,7 @@
             })
             .filter(Boolean);
 
-          if (items.length > 0) {
-            data[section.name] = uniqueByUrl(items).slice(0, 30);
+          if (items.length > 0) {            data[section.name] = uniqueByUrl(items).slice(0, 30);
           }
         } catch (err) {
           console.error(`Error loading section ${section.name}:`, err);
@@ -333,7 +349,7 @@
         }
       }
 
-      cb({ success: true, data });
+      cb({ success: true, data: data });
     } catch (e) {
       cb({ success: false, errorCode: "HOME_ERROR", message: String(e?.message || e) });
     }
@@ -341,7 +357,8 @@
 
   async function search(query, cb) {
     try {
-      const q = encodeURIComponent(String(query || "").trim());      const page = 1;
+      const q = encodeURIComponent(String(query || "").trim());
+      const page = 1;
       const url = `${manifest.baseUrl}/search/${q}/page/${page}/`;
       
       const doc = await loadDoc(url);
@@ -373,30 +390,26 @@
   }
 
   async function load(url, cb) {
-    try {
-      const doc = await loadDoc(url);
+    try {      const doc = await loadDoc(url);
       
-      // Extract basic metadata
       let title = cleanTitle(doc.querySelector("title")?.textContent);
       let posterUrl = normalizeUrl(doc.querySelector("meta[property='og:image']")?.getAttribute("content"), manifest.baseUrl);
       let description = doc.querySelector("span#summary")?.textContent?.trim() || "";
       
-      // Determine content type
       const isSeries = isSeriesUrl(url) || /series|web-series/i.test(title);
       const contentType = isSeries ? "series" : "movie";
       
-      // Extract IMDb URL for metadata enrichment
       const imdbAnchor = doc.querySelector("div.imdb_left > a");
       const imdbUrl = imdbAnchor?.getAttribute("href");
       let cinemetaData = null;
       
-      if (imdbUrl) {        const imdbId = imdbUrl.split("title/")?.[1]?.split("/")?.[0];
+      if (imdbUrl) {
+        const imdbId = imdbUrl.split("title/")?.[1]?.split("/")?.[0];
         if (imdbId) {
           cinemetaData = await fetchCinemetaData(contentType === "series" ? "tv" : "movie", imdbId);
         }
       }
       
-      // Enrich with Cinemeta data
       if (cinemetaData?.meta) {
         const meta = cinemetaData.meta;
         title = meta.name || title;
@@ -408,7 +421,6 @@
         const imdbRating = meta.imdbRating || "";
         const year = meta.year ? parseInt(meta.year) : null;
         
-        // Build cast array
         const actors = cast.map(c => new Actor({
           name: c.name || c,
           role: c.role || c.character || "",
@@ -416,36 +428,31 @@
         }));
         
         if (isSeries) {
-          // === SERIES HANDLING ===
-          const episodesMap = new Map(); // Map<season, Map<episodeNum, EpisodeData>>
+          const episodesMap = new Map();
           const buttons = doc.querySelectorAll("a.maxbutton-download-links, a.dl, a.btnn");
           
           for (const btn of buttons) {
             let link = btn.getAttribute("href");
             if (!link) continue;
             
-            // Handle protected links
             if (link.includes("id=")) {
               const id = link.split("id=").pop();
               link = await bypassProtectedLink(id) || link;
             }
-            
-            // Extract season info from button context
-            const seasonText = btn.parentElement?.previousElementSibling?.textContent || "";
+                        const seasonText = btn.parentElement?.previousElementSibling?.textContent || "";
             const seasonMatch = seasonText.match(/(?:Season|S)(\d+)/i);
             const seasonNum = seasonMatch ? parseInt(seasonMatch[1]) : 1;
             
-            // Load episode page
             try {
               const seasonDoc = await loadDoc(link);
               const epLinks = seasonDoc.querySelectorAll("h3 > a")
-                .filter(a => !a.textContent.toLowerCase().includes("zip"));              
+                .filter(a => !a.textContent.toLowerCase().includes("zip"));
+              
               let epNum = 1;
               for (const epAnchor of epLinks) {
                 const epUrl = epAnchor.getAttribute("href");
                 if (!epUrl) continue;
                 
-                // Check Cinemeta for episode details
                 const epInfo = cinemetaData.meta?.videos?.find(v => 
                   v.season === seasonNum && v.episode === epNum
                 );
@@ -468,7 +475,6 @@
             } catch (_) {}
           }
           
-          // Build episodes array
           const episodes = [];
           for (const [season, eps] of episodesMap) {
             for (const [epNum, epData] of eps) {
@@ -482,13 +488,10 @@
               }));
             }
           }
+                    episodes.sort((a, b) => (a.season - b.season) || (a.episode - b.episode));
           
-          // Sort episodes
-          episodes.sort((a, b) => 
-            (a.season - b.season) || (a.episode - b.episode)
-          );
-          
-          const item = new MultimediaItem({            title: title,
+          const item = new MultimediaItem({
+            title: title,
             url: url,
             posterUrl: posterUrl,
             bannerUrl: bgPoster,
@@ -511,7 +514,6 @@
           cb({ success: true, data: item });
           return;
         } else {
-          // === MOVIE HANDLING ===
           const sources = [];
           const buttons = doc.querySelectorAll("a.dl");
           
@@ -535,9 +537,9 @@
             year: year,
             score: imdbRating ? parseFloat(imdbRating) * 10 : null,
             tags: genres,
-            cast: actors,
-            type: "movie",
-            contentType: "movie",            episodes: [new Episode({
+            cast: actors,            type: "movie",
+            contentType: "movie",
+            episodes: [new Episode({
               name: title,
               url: JSON.stringify(sources),
               season: 1,
@@ -584,9 +586,9 @@
           title: title,
           url: url,
           posterUrl: posterUrl,
-          description: description,
-          type: "series",
-          contentType: "series",          episodes: episodes.length > 0 ? episodes : [new Episode({
+          description: description,          type: "series",
+          contentType: "series",
+          episodes: episodes.length > 0 ? episodes : [new Episode({
             name: title,
             url: JSON.stringify([{ url: url, source: "primary" }]),
             season: 1,
@@ -633,9 +635,8 @@
   }
 
   async function loadStreams(data, cb) {
-    try {
-      // Parse episode data
-      let sources = [];      if (typeof data === "string") {
+    try {      let sources = [];
+      if (typeof data === "string") {
         try {
           sources = JSON.parse(data);
         } catch (_) {
@@ -664,18 +665,15 @@
         const hostname = new URL(url).hostname.toLowerCase();
         let streams = [];
         
-        // Route to appropriate extractor
         if (hostname.includes("gdflix") || hostname.includes("gdlink")) {
           streams = await extractGDFlix(url, src.name || "", src.size || "");
         } else if (hostname.includes("fastdlserver")) {
           streams = await extractFastDLServer(url);
         } else {
-          // Generic extractor handling
           streams = await loadGenericExtractor(url);
         }
         
         for (const stream of streams) {
-          // Deduplicate by URL
           if (!seen.has(stream.url)) {
             seen.add(stream.url);
             results.push(stream);
@@ -684,9 +682,9 @@
       }
       
       cb({ success: true, data: results });
-    } catch (e) {      cb({ success: false, errorCode: "STREAM_ERROR", message: String(e?.message || e) });
-    }
-  }
+    } catch (e) {
+      cb({ success: false, errorCode: "STREAM_ERROR", message: String(e?.message || e) });
+    }  }
 
   // === EXPORT CORE FUNCTIONS ===
   globalThis.getHome = getHome;
