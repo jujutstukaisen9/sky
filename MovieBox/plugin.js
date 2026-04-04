@@ -1,21 +1,21 @@
 (function() {
   /**
    * BollyFlix - SkyStream Plugin
-   * Library functions preserved. Streams/extractors fixed.
+   * Library code preserved. Streaming/downloading fixed to match Kotlin logic.
+   * CRITICAL: Episode.url = raw URL string. loadStreams receives raw URL.
    */
 
   const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36";
   const CINEMETA_URL = "https://aiometadata.elfhosted.com/stremio/9197a4a9-2f5b-4911-845e-8704c520bdf7/meta";
   const UTILS_URL = "https://raw.githubusercontent.com/SaurabhKaperwan/Utils/refs/heads/main/urls.json";
 
-  // === CRITICAL FIX: Headers passed DIRECTLY to http_get ===
   const BASE_HEADERS = {
     "User-Agent": UA,
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Referer": manifest.baseUrl + "/"
   };
 
-  // === HELPER FUNCTIONS (Your code - preserved) ===
+  // === HELPER FUNCTIONS (Your working code - PRESERVED) ===
   function normalizeUrl(url, base) {
     if (!url) return "";
     const raw = String(url).trim();
@@ -79,13 +79,13 @@
     return htmlDecode((el && el.textContent ? el.textContent : "").replace(/\s+/g, " ").trim());
   }
 
-  // === NETWORK - CRITICAL FIX: Headers direct, not nested ===
+  // === NETWORK (Your working code - PRESERVED, minor syntax fix) ===
   async function request(url, headers) {
     headers = headers || {};
     var opts = {};
     for (var k in BASE_HEADERS) opts[k] = BASE_HEADERS[k];
     for (var k in headers) opts[k] = headers[k];
-    return await http_get(url, opts);  // ← Headers DIRECT, not { headers: {...} }
+    return await http_get(url, opts);
   }
 
   function isCloudflareBlocked(response, targetUrl) {
@@ -131,23 +131,21 @@
     }
   }
 
-  // === BYPASS - Multiple patterns for reliability ===
+  // === BYPASS (Exact Kotlin logic) ===
   async function bypassProtectedLink(id) {
     try {
       const url = "https://web.sidexfee.com/?id=" + id;
       const res = await request(url);
       const body = String(res.body || "");
-      const patterns = [/"link":"([^"]+)"/, /"url":"([^"]+)"/, /data-link="([^"]+)"/];
-      for (var i = 0; i < patterns.length; i++) {
-        const match = body.match(patterns[i]);
-        if (match && match[1]) {
-          const decoded = match[1].replace(/\\\//g, "/");
-          try { return safeBase64Decode(decoded); } catch(_) { return decoded; }
-        }
+      // Kotlin: """link":"([^"]+)""" + replace("\/", "/") + base64 decode
+      const match = body.match(/"link":"([^"]+)"/);
+      if (match && match[1]) {
+        const decoded = match[1].replace(/\\\//g, "/");
+        try { return safeBase64Decode(decoded); } catch(_) { return decoded; }
       }
-    } catch (_) {}    return null;
+    } catch (_) {}
+    return null;
   }
-
   async function resolveFinalUrl(startUrl, maxRedirects) {
     maxRedirects = maxRedirects || 7;
     let currentUrl = startUrl;
@@ -172,53 +170,61 @@
     return currentUrl;
   }
 
-  // === EXTRACTORS - Push to array, minimal StreamResult ===
+  // === EXTRACTORS (Exact Kotlin GDFlix/FastDL logic) ===
 
   async function extractGDFlix(url, streams) {
     try {
+      // Dynamic base URL (Kotlin: getLatestBaseUrl)
       let baseUrl = (url.match(/^https?:\/\/[^/]+/) || [""])[0];
-      const dynamicBase = await fetchDynamicBaseUrl("gdflix");
-      if (dynamicBase && baseUrl !== dynamicBase) {
-        url = url.replace(baseUrl, dynamicBase);
-        baseUrl = dynamicBase;
+      const latest = await fetchDynamicBaseUrl("gdflix");
+      if (latest && baseUrl !== latest) {
+        url = url.replace(baseUrl, latest);
+        baseUrl = latest;
       }
 
       const doc = await loadDoc(url);
-      const nameLi = doc.querySelector("ul > li:contains(Name)");
-      const sizeLi = doc.querySelector("ul > li:contains(Size)");
-      const name = nameLi ? textOf(nameLi).split("Name :")[1] || "" : "";
-      const size = sizeLi ? textOf(sizeLi).split("Size :")[1] || "" : "";
-      const quality = extractQuality(name);
+      
+      // Kotlin: ul > li.list-group-item:contains(Name/Size)
+      const nameLi = doc.querySelector("ul > li.list-group-item:contains(Name)");
+      const sizeLi = doc.querySelector("ul > li.list-group-item:contains(Size)");
+      const fileName = nameLi ? textOf(nameLi).split("Name :")[1] || "" : "";
+      const fileSize = sizeLi ? textOf(sizeLi).split("Size :")[1] || "" : "";
+      const quality = extractQuality(fileName);
 
-      const buttons = Array.from(doc.querySelectorAll("div.text-center a, a.btn-success"));
+      // Kotlin: div.text-center a
+      const buttons = Array.from(doc.querySelectorAll("div.text-center a"));
 
-      for (let bi = 0; bi < buttons.length; bi++) {
-        const btn = buttons[bi];
-        const text = textOf(btn).toLowerCase();        const href = btn.getAttribute("href");
+      for (let bi = 0; bi < buttons.length; bi++) {        const anchor = buttons[bi];
+        const txt = textOf(anchor).toLowerCase();
+        const href = anchor.getAttribute("href");
         if (!href) continue;
 
         let label = "";
         let finalUrl = href;
 
-        if (text.includes("fsl v2")) {
+        // EXACT Kotlin when{} matching
+        if (txt.includes("fsl v2")) {
           label = "[FSL V2]";
-        } else if (text.includes("direct dl") || text.includes("direct server") || text.includes("direct")) {
+        } else if (txt.includes("direct dl") || txt.includes("direct server")) {
           label = "[Direct]";
-        } else if (text.includes("cloud download") && text.includes("r2")) {
+        } else if (txt.includes("cloud download") && txt.includes("r2")) {
           label = "[Cloud]";
-        } else if (text.includes("fast cloud")) {
+        } else if (txt.includes("fast cloud")) {
+          // Kotlin: load(baseUrl+href), select div.card-body a
           try {
-            const nestedDoc = await loadDoc(baseUrl + href);
-            const nestedLink = nestedDoc.querySelector("div.card-body a");
-            if (!nestedLink) continue;
-            finalUrl = nestedLink.getAttribute("href");
+            const nested = await loadDoc(baseUrl + href);
+            const dlink = nested.querySelector("div.card-body a");
+            if (!dlink) continue;
+            finalUrl = dlink.getAttribute("href");
             label = "[FAST CLOUD]";
           } catch (_) { continue; }
         } else if (href.includes("pixeldra")) {
+          // Kotlin: getBaseUrl + api/file endpoint
           const base = (href.match(/^https?:\/\/[^/]+/) || ["https://pixeldrain.com"])[0];
           finalUrl = href.includes("download") ? href : base + "/api/file/" + href.split("/").pop() + "?download";
           label = "[Pixeldrain]";
-        } else if (text.includes("instant dl") || text.includes("instant")) {
+        } else if (txt.includes("instant dl")) {
+          // Kotlin: redirect with allowRedirects=false, parse location header
           try {
             var opts = {};
             for (var k in BASE_HEADERS) opts[k] = BASE_HEADERS[k];
@@ -229,21 +235,26 @@
             if (instant) { finalUrl = instant; label = "[Instant]"; }
             else continue;
           } catch (_) { continue; }
-        } else if (text.includes("gofile")) {
+        } else if (txt.includes("gofile")) {
+          // Kotlin: recursive loadExtractor for GoFile
           streams.push(new StreamResult({ url: href, source: "Gofile" }));
           continue;
         } else {
+          // Kotlin: Log.d("Error", "No Server matched")
           continue;
         }
-
         if (finalUrl && finalUrl.startsWith("http")) {
+          // Kotlin ExtractorLink: source, name, url, referer, quality, isM3u8, headers
           streams.push(new StreamResult({
             url: finalUrl,
-            source: "GDFlix" + label
+            source: "GDFlix" + label,
+            quality: quality,
+            headers: { "Referer": url, "User-Agent": UA }
           }));
         }
       }
-      // CF backup: /file/ → /wfile/
+
+      // Kotlin CF backup: CFType(newUrl.replace("file", "wfile"))
       try {
         const cfUrl = url.replace("/file/", "/wfile/");
         if (cfUrl !== url) {
@@ -256,7 +267,9 @@
               if (resolved) {
                 streams.push(new StreamResult({
                   url: resolved,
-                  source: "GDFlix[CF]"
+                  source: "GDFlix[CF]",
+                  quality: quality,
+                  headers: { "Referer": url, "User-Agent": UA }
                 }));
               }
             }
@@ -268,31 +281,34 @@
 
   async function extractFastDLServer(url, streams) {
     try {
+      // Kotlin: redirect with allowRedirects=false
       var opts = {};
       for (var k in BASE_HEADERS) opts[k] = BASE_HEADERS[k];
       opts.allowRedirects = false;
       const res = await http_get(url, opts);
       const location = res.headers && (res.headers["location"] || res.headers["Location"]);
       if (location) {
+        // Kotlin: loadExtractor(location, ...)
         streams.push(new StreamResult({ url: location, source: "FastDL" }));
       }
     } catch (_) {}
   }
-
   async function loadGenericExtractor(url, streams) {
     const hostname = new URL(url).hostname.toLowerCase();
     
     if (hostname.includes("pixeldrain")) {
       const base = (url.match(/^https?:\/\/[^/]+/) || ["https://pixeldrain.com"])[0];
-      const finalUrl = url.includes("download") ? url : base + "/api/file/" + url.split("/").pop() + "?download";
-      streams.push(new StreamResult({ url: finalUrl, source: "Pixeldrain" }));
+      const final = url.includes("download") ? url : base + "/api/file/" + url.split("/").pop() + "?download";
+      streams.push(new StreamResult({ url: final, source: "Pixeldrain" }));
     } else if (hostname.includes("gofile")) {
       streams.push(new StreamResult({ url: url, source: "Gofile" }));
     } else {
+      // Passthrough for SkyStream built-in extractor handling
       streams.push(new StreamResult({ url: url, source: "Generic" }));
     }
   }
-  // === CORE FUNCTIONS - Your working library code (preserved) ===
+
+  // === CORE FUNCTIONS - LIBRARY CODE PRESERVED (Your working code) ===
 
   async function getHome(cb) {
     try {
@@ -325,8 +341,7 @@
               return new MultimediaItem({
                 title: title,
                 url: href,
-                posterUrl: poster,
-                type: "movie",
+                posterUrl: poster,                type: "movie",
                 contentType: "movie"
               });
             })
@@ -341,7 +356,8 @@
         }
       }
 
-      cb({ success: true, data: data });    } catch (e) {
+      cb({ success: true,  data });
+    } catch (e) {
       cb({ success: false, errorCode: "HOME_ERROR", message: String(e && e.message ? e.message : e) });
     }
   }
@@ -374,8 +390,7 @@
           });
         })
         .filter(Boolean);
-
-      cb({ success: true, data: uniqueByUrl(results).slice(0, 40) });
+      cb({ success: true,  uniqueByUrl(results).slice(0, 40) });
     } catch (e) {
       cb({ success: false, errorCode: "SEARCH_ERROR", message: String(e && e.message ? e.message : e) });
     }
@@ -390,7 +405,8 @@
       let posterUrl = ogImg ? normalizeUrl(ogImg.getAttribute("content"), manifest.baseUrl) : "";
       const summary = doc.querySelector("span#summary");
       let description = summary ? textOf(summary) : "";
-            const isSeries = isSeriesUrl(url) || /series|web-series/i.test(title);
+      
+      const isSeries = isSeriesUrl(url) || /series|web-series/i.test(title);
       const contentType = isSeries ? "series" : "movie";
       
       const imdbAnchor = doc.querySelector("div.imdb_left > a");
@@ -423,8 +439,7 @@
           const c = cast[ci];
           const profilePath = c.profile_path || "";
           actors.push(new Actor({
-            name: c.name || c,
-            role: c.role || c.character || "",
+            name: c.name || c,            role: c.role || c.character || "",
             image: c.image || (profilePath ? "https://image.tmdb.org/t/p/w500" + profilePath : null)
           }));
         }
@@ -439,7 +454,8 @@
             if (!link) continue;
             
             if (link.includes("id=")) {
-              const id = link.split("id=").pop();              const bypassed = await bypassProtectedLink(id);
+              const id = link.split("id=").pop();
+              const bypassed = await bypassProtectedLink(id);
               if (bypassed) link = bypassed;
             }
             
@@ -471,9 +487,8 @@
                 }
                 
                 const epData = {
-                  url: epUrl,
-                  name: (epInfo && epInfo.name) || (epInfo && epInfo.title) || "Episode " + epNum,
-                  season: seasonNum,
+                  url: epUrl,  // ← RAW URL STRING (CRITICAL FIX)
+                  name: (epInfo && epInfo.name) || (epInfo && epInfo.title) || "Episode " + epNum,                  season: seasonNum,
                   episode: epNum,
                   posterUrl: (epInfo && epInfo.thumbnail) || posterUrl,
                   description: (epInfo && epInfo.overview) || ""
@@ -488,12 +503,13 @@
             } catch (_) {}
           }
           
-          const episodes = [];          for (const [season, eps] of episodesMap) {
+          const episodes = [];
+          for (const [season, eps] of episodesMap) {
             for (const [epNum, epData] of eps) {
-              // CRITICAL FIX: Episode URL = simple object { url: ... }
+              // CRITICAL FIX: Episode.url = RAW URL STRING, NOT JSON.stringify
               episodes.push(new Episode({
                 name: epData.name,
-                url: JSON.stringify({ url: epData.url }),
+                url: epData.url,  // ← RAW STRING, matches Kotlin loadLinks(data: String)
                 season: season,
                 episode: epNum,
                 posterUrl: epData.posterUrl,
@@ -505,7 +521,7 @@
           
           const fallbackEp = new Episode({
             name: title,
-            url: JSON.stringify({ url: url }),
+            url: url,  // ← RAW STRING
             season: 1,
             episode: 1,
             posterUrl: posterUrl
@@ -521,12 +537,11 @@
             score: imdbRating ? parseFloat(imdbRating) * 10 : null,
             tags: genres,
             cast: actors,
-            type: "series",
-            contentType: "series",
+            type: "series",            contentType: "series",
             episodes: episodes.length > 0 ? episodes : [fallbackEp]
           });
           
-          cb({ success: true, data: item });
+          cb({ success: true,  item });
           return;
         } else {
           const sources = [];
@@ -537,14 +552,15 @@
             let link = btn.getAttribute("href");
             if (!link) continue;
             
-            if (link.includes("id=")) {              const id = link.split("id=").pop();
+            if (link.includes("id=")) {
+              const id = link.split("id=").pop();
               const bypassed = await bypassProtectedLink(id);
               if (bypassed) link = bypassed;
             }
-            sources.push({ url: link });
+            sources.push(link);  // ← RAW URL STRING
           }
           
-          const firstUrl = sources.length > 0 && sources[0] && sources[0].url ? sources[0].url : url;
+          const firstUrl = sources.length > 0 ? sources[0] : url;
           
           const item = new MultimediaItem({
             title: title,
@@ -560,18 +576,17 @@
             contentType: "movie",
             episodes: [new Episode({
               name: title,
-              url: JSON.stringify({ url: firstUrl }),
+              url: firstUrl,  // ← RAW STRING, matches Kotlin
               season: 1,
               episode: 1,
               posterUrl: posterUrl
             })]
           });
           
-          cb({ success: true, data: item });
+          cb({ success: true,  item });
           return;
         }
-      }
-      
+      }      
       // Fallback without Cinemeta
       if (isSeries) {
         const episodes = [];
@@ -586,7 +601,8 @@
           if (link.includes("id=")) {
             const id = link.split("id=").pop();
             const bypassed = await bypassProtectedLink(id);
-            if (bypassed) link = bypassed;          }
+            if (bypassed) link = bypassed;
+          }
           
           const parent = btn.parentElement;
           const prevSibling = parent ? parent.previousElementSibling : null;
@@ -596,7 +612,7 @@
           
           episodes.push(new Episode({
             name: "Episode " + epNum,
-            url: JSON.stringify({ url: link }),
+            url: link,  // ← RAW STRING
             season: seasonNum,
             episode: epNum,
             posterUrl: posterUrl
@@ -606,7 +622,7 @@
         
         const fallbackEp = new Episode({
           name: title,
-          url: JSON.stringify({ url: url }),
+          url: url,  // ← RAW STRING
           season: 1,
           episode: 1,
           posterUrl: posterUrl
@@ -619,10 +635,9 @@
           description: description,
           type: "series",
           contentType: "series",
-          episodes: episodes.length > 0 ? episodes : [fallbackEp]
-        });
+          episodes: episodes.length > 0 ? episodes : [fallbackEp]        });
         
-        cb({ success: true, data: item });
+        cb({ success: true,  item });
       } else {
         const sources = [];
         const buttons = doc.querySelectorAll("a.dl");
@@ -635,8 +650,9 @@
             const bypassed = await bypassProtectedLink(id);
             if (bypassed) link = bypassed;
           }
-          sources.push({ url: link });        }
-        const firstUrl = sources.length > 0 && sources[0] && sources[0].url ? sources[0].url : url;
+          sources.push(link);
+        }
+        const firstUrl = sources.length > 0 ? sources[0] : url;
         
         const item = new MultimediaItem({
           title: title,
@@ -647,49 +663,33 @@
           contentType: "movie",
           episodes: [new Episode({
             name: title,
-            url: JSON.stringify({ url: firstUrl }),
+            url: firstUrl,  // ← RAW STRING
             season: 1,
             episode: 1,
             posterUrl: posterUrl
           })]
         });
         
-        cb({ success: true, data: item });
+        cb({ success: true,  item });
       }
     } catch (e) {
       cb({ success: false, errorCode: "LOAD_ERROR", message: String(e && e.message ? e.message : e) });
     }
   }
 
-  // === loadStreams - FIXED: Exact working pattern ===
+  // === loadStreams - FIXED: Exact Kotlin loadLinks pattern ===
   async function loadStreams(data, cb) {
     try {
-      // Parse episode URL - CRITICAL: Handle {url} format
-      let url = null;
-      if (typeof data === "string") {
-        try {
-          const parsed = JSON.parse(data);
-          if (Array.isArray(parsed)) {
-            const first = parsed[0];
-            url = (first && first.url) ? first.url : first;
-          } else if (parsed && parsed.url) {
-            url = parsed.url;
-          } else {
-            url = parsed;
-          }
-        } catch(_) { url = data; }
-      } else if (Array.isArray(data)) {
-        const first = data[0];
-        url = (first && first.url) ? first.url : first;
-      } else if (data && data.url) {
-        url = data.url;
-      }
-            if (!url) return cb({ success: true, data: [] });
+      // CRITICAL FIX: data is RAW URL STRING (matches Kotlin loadLinks(data: String))
+      const url = String(data || "").trim();
+      
+      if (!url || !url.startsWith("http")) {
+        return cb({ success: true, data: [] });      }
       
       const streams = [];
-      const srcStr = String(url).toLowerCase();
+      const srcStr = url.toLowerCase();
       
-      // CRITICAL: Extractors push to streams array (passed by reference)
+      // EXACT Kotlin routing: source.contains("gdflix") || source.contains("gdlink")
       if (srcStr.includes("gdflix") || srcStr.includes("gdlink")) {
         await extractGDFlix(url, streams);
       } else if (srcStr.includes("fastdlserver")) {
