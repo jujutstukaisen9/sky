@@ -1,28 +1,27 @@
 (function() {
   /**
    * BollyFlix - SkyStream Plugin
-   * Library code preserved. Streaming/downloading fixed to match Kotlin logic.
-   * CRITICAL: Episode.url = raw URL string. loadStreams receives raw URL.
+   * ES5-compatible. Library preserved. Streaming/downloading fixed.
    */
 
-  const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36";
-  const CINEMETA_URL = "https://aiometadata.elfhosted.com/stremio/9197a4a9-2f5b-4911-845e-8704c520bdf7/meta";
-  const UTILS_URL = "https://raw.githubusercontent.com/SaurabhKaperwan/Utils/refs/heads/main/urls.json";
+  var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36";
+  var CINEMETA_URL = "https://aiometadata.elfhosted.com/stremio/9197a4a9-2f5b-4911-845e-8704c520bdf7/meta";
+  var UTILS_URL = "https://raw.githubusercontent.com/SaurabhKaperwan/Utils/refs/heads/main/urls.json";
 
-  const BASE_HEADERS = {
+  var BASE_HEADERS = {
     "User-Agent": UA,
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Referer": manifest.baseUrl + "/"
   };
 
-  // === HELPER FUNCTIONS (Your working code - PRESERVED) ===
+  // === HELPER FUNCTIONS ===
   function normalizeUrl(url, base) {
     if (!url) return "";
-    const raw = String(url).trim();
+    var raw = String(url).trim();
     if (!raw) return "";
-    if (raw.startsWith("//")) return "https:" + raw;
+    if (raw.indexOf("//") === 0) return "https:" + raw;
     if (/^https?:\/\//i.test(raw)) return raw;
-    if (raw.startsWith("/")) return base + raw;
+    if (raw.indexOf("/") === 0) return base + raw;
     return base + "/" + raw;
   }
 
@@ -33,26 +32,27 @@
 
   function extractQuality(text) {
     if (!text) return "Auto";
-    const t = String(text).toLowerCase();
-    if (t.includes("2160") || t.includes("4k") || t.includes("ultra")) return "4K";
-    if (t.includes("1080") || t.includes("full")) return "1080p";
-    if (t.includes("1440") || t.includes("quad")) return "1440p";
-    if (t.includes("720") || t.includes("hd")) return "720p";
-    if (t.includes("480") || t.includes("sd")) return "480p";
-    if (t.includes("360")) return "360p";
-    if (t.includes("cam")) return "CAM";
+    var t = String(text).toLowerCase();
+    if (t.indexOf("2160") >= 0 || t.indexOf("4k") >= 0 || t.indexOf("ultra") >= 0) return "4K";
+    if (t.indexOf("1080") >= 0 || t.indexOf("full") >= 0) return "1080p";
+    if (t.indexOf("1440") >= 0 || t.indexOf("quad") >= 0) return "1440p";
+    if (t.indexOf("720") >= 0 || t.indexOf("hd") >= 0) return "720p";
+    if (t.indexOf("480") >= 0 || t.indexOf("sd") >= 0) return "480p";
+    if (t.indexOf("360") >= 0) return "360p";
+    if (t.indexOf("cam") >= 0) return "CAM";
     return "Auto";
   }
 
   function isSeriesUrl(url) {
     return /series|web-series|season/i.test(String(url));
   }
-  function uniqueByUrl(items) {
-    const out = [];
-    const seen = new Set();
-    for (const it of items) {
-      if (!it || !it.url || seen.has(it.url)) continue;
-      seen.add(it.url);
+
+  function uniqueByUrl(items) {    var out = [];
+    var seen = {};
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      if (!it || !it.url || seen[it.url]) continue;
+      seen[it.url] = true;
       out.push(it);
     }
     return out;
@@ -61,7 +61,7 @@
   function safeBase64Decode(str) {
     if (!str) return "";
     try {
-      let s = String(str).trim().replace(/-/g, "+").replace(/_/g, "/");
+      var s = String(str).trim().replace(/-/g, "+").replace(/_/g, "/");
       while (s.length % 4 !== 0) s += "=";
       return atob(s);
     } catch (_) {
@@ -72,643 +72,629 @@
   function htmlDecode(text) {
     if (!text) return "";
     return String(text)
-      .replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code, 10)));
+      .replace(/&amp;/g, "&")
+      .replace(/&quot;/g, '"')
+      .replace(/&#(\d+);/g, function(_, code) { return String.fromCharCode(parseInt(code, 10)); });
   }
 
   function textOf(el) {
-    return htmlDecode((el && el.textContent ? el.textContent : "").replace(/\s+/g, " ").trim());
+    if (!el || !el.textContent) return "";
+    return htmlDecode(String(el.textContent).replace(/\s+/g, " ").trim());
   }
 
-  // === NETWORK (Your working code - PRESERVED, minor syntax fix) ===
-  async function request(url, headers) {
+  // === NETWORK ===
+  function request(url, headers) {
     headers = headers || {};
     var opts = {};
     for (var k in BASE_HEADERS) opts[k] = BASE_HEADERS[k];
     for (var k in headers) opts[k] = headers[k];
-    return await http_get(url, opts);
+    return http_get(url, opts);
   }
 
   function isCloudflareBlocked(response, targetUrl) {
-    const body = String(response && response.body ? response.body : "");
-    const headerServer = (response && response.headers && (response.headers["server"] || response.headers["Server"]) || "").toLowerCase();
-    const titleMatch = body.match(/<title>([^<]*)</i);
-    const title = (titleMatch && titleMatch[1] ? titleMatch[1] : "").toLowerCase();
+    var body = String(response && response.body ? response.body : "");
+    var headerServer = "";
+    if (response && response.headers) {
+      headerServer = (response.headers["server"] || response.headers["Server"] || "").toLowerCase();
+    }    var titleMatch = body.match(/<title>([^<]*)</i);
+    var title = titleMatch && titleMatch[1] ? titleMatch[1].toLowerCase() : "";
     
-    if (/cloudflare/i.test(body) && /attention required|verify you are human|just a moment|cf-ray|cf-chl/i.test(body)) return true;
-    if (title.includes("just a moment") || title.includes("attention required")) return true;
-    if (headerServer.includes("cloudflare") && /checking your browser|verify you are human/i.test(body)) return true;    if (String(targetUrl || "").includes("/cdn-cgi/challenge-platform/")) return true;
+    if (body.indexOf("cloudflare") >= 0 && /attention required|verify you are human|just a moment|cf-ray|cf-chl/i.test(body)) return true;
+    if (title.indexOf("just a moment") >= 0 || title.indexOf("attention required") >= 0) return true;
+    if (headerServer.indexOf("cloudflare") >= 0 && /checking your browser|verify you are human/i.test(body)) return true;
+    if (String(targetUrl || "").indexOf("/cdn-cgi/challenge-platform/") >= 0) return true;
     return false;
   }
 
-  async function loadDoc(url, headers) {
+  function loadDoc(url, headers) {
     headers = headers || {};
-    const res = await request(url, headers);
-    const finalUrl = String(res && (res.finalUrl || res.url) ? (res.finalUrl || res.url) : url || "");
-    
-    if (isCloudflareBlocked(res, finalUrl)) {
-      throw new Error("CLOUDFLARE_BLOCKED: " + finalUrl);
-    }
-    return await parseHtml(res.body);
-  }
-
-  async function fetchDynamicBaseUrl(source) {
-    try {
-      const res = await request(UTILS_URL);
-      const urls = JSON.parse(res.body);
-      return (urls && urls[source] && urls[source].trim) ? urls[source].trim() : null;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  async function fetchCinemetaData(type, imdbId) {
-    try {
-      const url = CINEMETA_URL + "/" + type + "/" + imdbId + ".json";
-      const res = await request(url, { "Accept": "application/json" });
-      return JSON.parse(res.body);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  // === BYPASS (Exact Kotlin logic) ===
-  async function bypassProtectedLink(id) {
-    try {
-      const url = "https://web.sidexfee.com/?id=" + id;
-      const res = await request(url);
-      const body = String(res.body || "");
-      // Kotlin: """link":"([^"]+)""" + replace("\/", "/") + base64 decode
-      const match = body.match(/"link":"([^"]+)"/);
-      if (match && match[1]) {
-        const decoded = match[1].replace(/\\\//g, "/");
-        try { return safeBase64Decode(decoded); } catch(_) { return decoded; }
+    return request(url, headers).then(function(res) {
+      var finalUrl = String(res && (res.finalUrl || res.url) ? (res.finalUrl || res.url) : url || "");
+      if (isCloudflareBlocked(res, finalUrl)) {
+        throw new Error("CLOUDFLARE_BLOCKED: " + finalUrl);
       }
-    } catch (_) {}
-    return null;
+      return parseHtml(res.body);
+    });
   }
-  async function resolveFinalUrl(startUrl, maxRedirects) {
-    maxRedirects = maxRedirects || 7;
-    let currentUrl = startUrl;
-    for (let i = 0; i < maxRedirects; i++) {
+
+  function fetchDynamicBaseUrl(source) {
+    return request(UTILS_URL).then(function(res) {
       try {
+        var urls = JSON.parse(res.body);
+        return (urls && urls[source] && urls[source].trim) ? urls[source].trim() : null;
+      } catch (_) {
+        return null;
+      }
+    }).catch(function(_) { return null; });
+  }
+
+  function fetchCinemetaData(type, imdbId) {
+    var url = CINEMETA_URL + "/" + type + "/" + imdbId + ".json";
+    return request(url, { "Accept": "application/json" }).then(function(res) {
+      return JSON.parse(res.body);
+    }).catch(function(_) { return null; });
+  }
+
+  // === BYPASS ===
+  function bypassProtectedLink(id) {
+    return request("https://web.sidexfee.com/?id=" + id).then(function(res) {
+      var body = String(res.body || "");
+      var patterns = [/"link":"([^"]+)"/, /"url":"([^"]+)"/, /data-link="([^"]+)"/];
+      for (var i = 0; i < patterns.length; i++) {
+        var match = body.match(patterns[i]);
+        if (match && match[1]) {
+          var decoded = match[1].replace(/\\\//g, "/");
+          try { return safeBase64Decode(decoded); } catch(_) { return decoded; }
+        }      }
+      return null;
+    }).catch(function(_) { return null; });
+  }
+
+  function resolveFinalUrl(startUrl, maxRedirects) {
+    maxRedirects = maxRedirects || 7;
+    var currentUrl = startUrl;
+    var chain = Promise.resolve();
+    for (var i = 0; i < maxRedirects; i++) {
+      chain = chain.then(function() {
         var opts = {};
         for (var k in BASE_HEADERS) opts[k] = BASE_HEADERS[k];
         opts.allowRedirects = false;
-        const res = await http_get(currentUrl, opts);
-        if (res.code === 200) break;
+        return http_get(currentUrl, opts);
+      }).then(function(res) {
+        if (res.code === 200) return currentUrl;
         if (res.code >= 300 && res.code < 400) {
-          const location = res.headers && (res.headers["location"] || res.headers["Location"]);
-          if (!location) break;
-          currentUrl = location;
-        } else {
-          break;
+          var location = res.headers && (res.headers["location"] || res.headers["Location"]);
+          if (location) {
+            currentUrl = location;
+            return null;
+          }
         }
-      } catch (_) {
-        break;
-      }
+        return currentUrl;
+      });
     }
-    return currentUrl;
+    return chain.then(function(result) { return result || currentUrl; });
   }
 
-  // === EXTRACTORS (Exact Kotlin GDFlix/FastDL logic) ===
-
-  async function extractGDFlix(url, streams) {
-    try {
-      // Dynamic base URL (Kotlin: getLatestBaseUrl)
-      let baseUrl = (url.match(/^https?:\/\/[^/]+/) || [""])[0];
-      const latest = await fetchDynamicBaseUrl("gdflix");
+  // === EXTRACTORS ===
+  function extractGDFlix(url, streams) {
+    return fetchDynamicBaseUrl("gdflix").then(function(latest) {
+      var baseUrl = (url.match(/^https?:\/\/[^/]+/) || [""])[0];
       if (latest && baseUrl !== latest) {
         url = url.replace(baseUrl, latest);
         baseUrl = latest;
       }
+      return loadDoc(url);
+    }).then(function(doc) {
+      var nameLi = doc.querySelector("ul > li.list-group-item:contains(Name)");
+      var sizeLi = doc.querySelector("ul > li.list-group-item:contains(Size)");
+      var fileName = nameLi ? textOf(nameLi).split("Name :")[1] || "" : "";
+      var fileSize = sizeLi ? textOf(sizeLi).split("Size :")[1] || "" : "";
+      var quality = extractQuality(fileName);
 
-      const doc = await loadDoc(url);
-      
-      // Kotlin: ul > li.list-group-item:contains(Name/Size)
-      const nameLi = doc.querySelector("ul > li.list-group-item:contains(Name)");
-      const sizeLi = doc.querySelector("ul > li.list-group-item:contains(Size)");
-      const fileName = nameLi ? textOf(nameLi).split("Name :")[1] || "" : "";
-      const fileSize = sizeLi ? textOf(sizeLi).split("Size :")[1] || "" : "";
-      const quality = extractQuality(fileName);
+      var buttons = Array.prototype.slice.call(doc.querySelectorAll("div.text-center a"));
+      var promises = [];
 
-      // Kotlin: div.text-center a
-      const buttons = Array.from(doc.querySelectorAll("div.text-center a"));
+      for (var bi = 0; bi < buttons.length; bi++) {        (function(anchor) {
+          var txt = textOf(anchor).toLowerCase();
+          var href = anchor.getAttribute("href");
+          if (!href) return;
 
-      for (let bi = 0; bi < buttons.length; bi++) {        const anchor = buttons[bi];
-        const txt = textOf(anchor).toLowerCase();
-        const href = anchor.getAttribute("href");
-        if (!href) continue;
+          var label = "";
+          var finalUrl = href;
+          var promise = Promise.resolve();
 
-        let label = "";
-        let finalUrl = href;
+          if (txt.indexOf("fsl v2") >= 0) {
+            label = "[FSL V2]";
+          } else if (txt.indexOf("direct dl") >= 0 || txt.indexOf("direct server") >= 0) {
+            label = "[Direct]";
+          } else if (txt.indexOf("cloud download") >= 0 && txt.indexOf("r2") >= 0) {
+            label = "[Cloud]";
+          } else if (txt.indexOf("fast cloud") >= 0) {
+            promise = loadDoc(baseUrl + href).then(function(nested) {
+              var dlink = nested.querySelector("div.card-body a");
+              if (!dlink) throw new Error("No link");
+              finalUrl = dlink.getAttribute("href");
+              label = "[FAST CLOUD]";
+            }).catch(function() { throw new Error("Skip"); });
+          } else if (href.indexOf("pixeldra") >= 0) {
+            var base = (href.match(/^https?:\/\/[^/]+/) || ["https://pixeldrain.com"])[0];
+            finalUrl = href.indexOf("download") >= 0 ? href : base + "/api/file/" + href.split("/").pop() + "?download";
+            label = "[Pixeldrain]";
+          } else if (txt.indexOf("instant dl") >= 0) {
+            promise = (function() {
+              var opts = {};
+              for (var k in BASE_HEADERS) opts[k] = BASE_HEADERS[k];
+              opts.allowRedirects = false;
+              return http_get(href, opts);
+            })().then(function(r) {
+              var loc = r.headers && (r.headers["location"] || r.headers["Location"]) || "";
+              var instant = loc.indexOf("url=") >= 0 ? loc.split("url=")[1] : loc;
+              if (instant) { finalUrl = instant; label = "[Instant]"; }
+              else throw new Error("Skip");
+            }).catch(function() { throw new Error("Skip"); });
+          } else if (txt.indexOf("gofile") >= 0) {
+            streams.push(new StreamResult({ url: href, source: "Gofile" }));
+            return;
+          } else {
+            return;
+          }
 
-        // EXACT Kotlin when{} matching
-        if (txt.includes("fsl v2")) {
-          label = "[FSL V2]";
-        } else if (txt.includes("direct dl") || txt.includes("direct server")) {
-          label = "[Direct]";
-        } else if (txt.includes("cloud download") && txt.includes("r2")) {
-          label = "[Cloud]";
-        } else if (txt.includes("fast cloud")) {
-          // Kotlin: load(baseUrl+href), select div.card-body a
-          try {
-            const nested = await loadDoc(baseUrl + href);
-            const dlink = nested.querySelector("div.card-body a");
-            if (!dlink) continue;
-            finalUrl = dlink.getAttribute("href");
-            label = "[FAST CLOUD]";
-          } catch (_) { continue; }
-        } else if (href.includes("pixeldra")) {
-          // Kotlin: getBaseUrl + api/file endpoint
-          const base = (href.match(/^https?:\/\/[^/]+/) || ["https://pixeldrain.com"])[0];
-          finalUrl = href.includes("download") ? href : base + "/api/file/" + href.split("/").pop() + "?download";
-          label = "[Pixeldrain]";
-        } else if (txt.includes("instant dl")) {
-          // Kotlin: redirect with allowRedirects=false, parse location header
-          try {
-            var opts = {};
-            for (var k in BASE_HEADERS) opts[k] = BASE_HEADERS[k];
-            opts.allowRedirects = false;
-            const r = await http_get(href, opts);
-            const loc = r.headers && (r.headers["location"] || r.headers["Location"]) || "";
-            const instant = loc.includes("url=") ? loc.split("url=")[1] : loc;
-            if (instant) { finalUrl = instant; label = "[Instant]"; }
-            else continue;
-          } catch (_) { continue; }
-        } else if (txt.includes("gofile")) {
-          // Kotlin: recursive loadExtractor for GoFile
-          streams.push(new StreamResult({ url: href, source: "Gofile" }));
-          continue;
-        } else {
-          // Kotlin: Log.d("Error", "No Server matched")
-          continue;
-        }
-        if (finalUrl && finalUrl.startsWith("http")) {
-          // Kotlin ExtractorLink: source, name, url, referer, quality, isM3u8, headers
-          streams.push(new StreamResult({
-            url: finalUrl,
-            source: "GDFlix" + label,
-            quality: quality,
-            headers: { "Referer": url, "User-Agent": UA }
-          }));
-        }
+          promise.then(function() {
+            if (finalUrl && finalUrl.indexOf("http") === 0) {
+              streams.push(new StreamResult({
+                url: finalUrl,
+                source: "GDFlix" + label,                quality: quality,
+                headers: { "Referer": url, "User-Agent": UA }
+              }));
+            }
+          }).catch(function(e) {
+            if (e.message !== "Skip") console.error("GDFlix error:", e);
+          });
+          promises.push(promise);
+        })(buttons[bi]);
       }
 
-      // Kotlin CF backup: CFType(newUrl.replace("file", "wfile"))
-      try {
-        const cfUrl = url.replace("/file/", "/wfile/");
+      return Promise.all(promises).then(function() {
+        // CF backup
+        var cfUrl = url.replace("/file/", "/wfile/");
         if (cfUrl !== url) {
-          const cfDoc = await loadDoc(cfUrl);
-          const cfBtns = cfDoc.querySelectorAll("a.btn-success");
-          for (let ci = 0; ci < cfBtns.length; ci++) {
-            const cfHref = cfBtns[ci].getAttribute("href");
-            if (cfHref) {
-              const resolved = await resolveFinalUrl(cfHref);
-              if (resolved) {
-                streams.push(new StreamResult({
-                  url: resolved,
-                  source: "GDFlix[CF]",
-                  quality: quality,
-                  headers: { "Referer": url, "User-Agent": UA }
-                }));
+          return loadDoc(cfUrl).then(function(cfDoc) {
+            var cfBtns = cfDoc.querySelectorAll("a.btn-success");
+            for (var ci = 0; ci < cfBtns.length; ci++) {
+              var cfHref = cfBtns[ci].getAttribute("href");
+              if (cfHref) {
+                resolveFinalUrl(cfHref).then(function(resolved) {
+                  if (resolved) {
+                    streams.push(new StreamResult({
+                      url: resolved,
+                      source: "GDFlix[CF]",
+                      quality: quality,
+                      headers: { "Referer": url, "User-Agent": UA }
+                    }));
+                  }
+                });
               }
             }
-          }
+          });
         }
-      } catch (_) {}
-    } catch (_) {}
+      });
+    }).catch(function(_) {});
   }
 
-  async function extractFastDLServer(url, streams) {
-    try {
-      // Kotlin: redirect with allowRedirects=false
-      var opts = {};
-      for (var k in BASE_HEADERS) opts[k] = BASE_HEADERS[k];
-      opts.allowRedirects = false;
-      const res = await http_get(url, opts);
-      const location = res.headers && (res.headers["location"] || res.headers["Location"]);
+  function extractFastDLServer(url, streams) {
+    var opts = {};
+    for (var k in BASE_HEADERS) opts[k] = BASE_HEADERS[k];
+    opts.allowRedirects = false;
+    return http_get(url, opts).then(function(res) {
+      var location = res.headers && (res.headers["location"] || res.headers["Location"]);
       if (location) {
-        // Kotlin: loadExtractor(location, ...)
         streams.push(new StreamResult({ url: location, source: "FastDL" }));
       }
-    } catch (_) {}
+    }).catch(function(_) {});
   }
-  async function loadGenericExtractor(url, streams) {
-    const hostname = new URL(url).hostname.toLowerCase();
-    
-    if (hostname.includes("pixeldrain")) {
-      const base = (url.match(/^https?:\/\/[^/]+/) || ["https://pixeldrain.com"])[0];
-      const final = url.includes("download") ? url : base + "/api/file/" + url.split("/").pop() + "?download";
+  function loadGenericExtractor(url, streams) {
+    var hostname = new URL(url).hostname.toLowerCase();
+    if (hostname.indexOf("pixeldrain") >= 0) {
+      var base = (url.match(/^https?:\/\/[^/]+/) || ["https://pixeldrain.com"])[0];
+      var final = url.indexOf("download") >= 0 ? url : base + "/api/file/" + url.split("/").pop() + "?download";
       streams.push(new StreamResult({ url: final, source: "Pixeldrain" }));
-    } else if (hostname.includes("gofile")) {
+    } else if (hostname.indexOf("gofile") >= 0) {
       streams.push(new StreamResult({ url: url, source: "Gofile" }));
     } else {
-      // Passthrough for SkyStream built-in extractor handling
       streams.push(new StreamResult({ url: url, source: "Generic" }));
     }
   }
 
-  // === CORE FUNCTIONS - LIBRARY CODE PRESERVED (Your working code) ===
+  // === CORE FUNCTIONS ===
+  function getHome(cb) {
+    var sections = [
+      { name: "Trending", path: "" },
+      { name: "Bollywood Movies", path: "/movies/bollywood/" },
+      { name: "Hollywood Movies", path: "/movies/hollywood/" },
+      { name: "Anime", path: "/anime/" }
+    ];
+    var data = {};
+    var idx = 0;
 
-  async function getHome(cb) {
-    try {
-      const sections = [
-        { name: "Trending", path: "" },
-        { name: "Bollywood Movies", path: "/movies/bollywood/" },
-        { name: "Hollywood Movies", path: "/movies/hollywood/" },
-        { name: "Anime", path: "/anime/" }
-      ];
-
-      const data = {};
-
-      for (const section of sections) {
-        try {
-          const url = section.path ? manifest.baseUrl + section.path : manifest.baseUrl;
-          const doc = await loadDoc(url);
-          
-          const items = Array.from(doc.querySelectorAll("div.post-cards > article"))
-            .map(el => {
-              const anchor = el.querySelector("a");
-              if (!anchor) return null;
-              
-              const title = cleanTitle(anchor.getAttribute("title"));
-              const href = normalizeUrl(anchor.getAttribute("href"), manifest.baseUrl);
-              const img = el.querySelector("img");
-              const poster = img ? normalizeUrl(img.getAttribute("src"), manifest.baseUrl) : "";
-              
-              if (!title || !href) return null;
-              
-              return new MultimediaItem({
-                title: title,
-                url: href,
-                posterUrl: poster,                type: "movie",
-                contentType: "movie"
-              });
-            })
-            .filter(Boolean);
-
-          if (items.length > 0) {
-            data[section.name] = uniqueByUrl(items).slice(0, 30);
-          }
-        } catch (err) {
-          console.error("Error loading section " + section.name + ":", err);
-          data[section.name] = [];
-        }
+    function loadNext() {
+      if (idx >= sections.length) {
+        cb({ success: true,  data });
+        return;
       }
-
-      cb({ success: true,  data });
-    } catch (e) {
-      cb({ success: false, errorCode: "HOME_ERROR", message: String(e && e.message ? e.message : e) });
+      var section = sections[idx++];
+      var url = section.path ? manifest.baseUrl + section.path : manifest.baseUrl;
+      loadDoc(url).then(function(doc) {
+        var articles = doc.querySelectorAll("div.post-cards > article");
+        var items = [];
+        for (var ai = 0; ai < articles.length; ai++) {
+          var el = articles[ai];
+          var anchor = el.querySelector("a");
+          if (!anchor) continue;
+          var title = cleanTitle(anchor.getAttribute("title"));
+          var href = normalizeUrl(anchor.getAttribute("href"), manifest.baseUrl);
+          var img = el.querySelector("img");
+          var poster = img ? normalizeUrl(img.getAttribute("src"), manifest.baseUrl) : "";
+          if (!title || !href) continue;
+          items.push(new MultimediaItem({ title: title, url: href, posterUrl: poster, type: "movie", contentType: "movie" }));
+        }
+        if (items.length > 0) data[section.name] = uniqueByUrl(items).slice(0, 30);
+        else data[section.name] = [];
+      }).catch(function(err) {
+        console.error("Error loading section " + section.name + ":", err);
+        data[section.name] = [];      }).then(loadNext);
     }
+    loadNext();
   }
 
-  async function search(query, cb) {
-    try {
-      const q = encodeURIComponent(String(query || "").trim());
-      const page = 1;
-      const url = manifest.baseUrl + "/search/" + q + "/page/" + page + "/";
-      
-      const doc = await loadDoc(url);
-      const results = Array.from(doc.querySelectorAll("div.post-cards > article"))
-        .map(el => {
-          const anchor = el.querySelector("a");
-          if (!anchor) return null;
-          
-          const title = cleanTitle(anchor.getAttribute("title"));
-          const href = normalizeUrl(anchor.getAttribute("href"), manifest.baseUrl);
-          const img = el.querySelector("img");
-          const poster = img ? normalizeUrl(img.getAttribute("src"), manifest.baseUrl) : "";
-          
-          if (!title || !href) return null;
-          
-          return new MultimediaItem({
-            title: title,
-            url: href,
-            posterUrl: poster,
-            type: "movie",
-            contentType: "movie"
-          });
-        })
-        .filter(Boolean);
+  function search(query, cb) {
+    var q = encodeURIComponent(String(query || "").trim());
+    var url = manifest.baseUrl + "/search/" + q + "/page/1/";
+    loadDoc(url).then(function(doc) {
+      var articles = doc.querySelectorAll("div.post-cards > article");
+      var results = [];
+      for (var ai = 0; ai < articles.length; ai++) {
+        var el = articles[ai];
+        var anchor = el.querySelector("a");
+        if (!anchor) continue;
+        var title = cleanTitle(anchor.getAttribute("title"));
+        var href = normalizeUrl(anchor.getAttribute("href"), manifest.baseUrl);
+        var img = el.querySelector("img");
+        var poster = img ? normalizeUrl(img.getAttribute("src"), manifest.baseUrl) : "";
+        if (!title || !href) continue;
+        results.push(new MultimediaItem({ title: title, url: href, posterUrl: poster, type: "movie", contentType: "movie" }));
+      }
       cb({ success: true,  uniqueByUrl(results).slice(0, 40) });
-    } catch (e) {
+    }).catch(function(e) {
       cb({ success: false, errorCode: "SEARCH_ERROR", message: String(e && e.message ? e.message : e) });
-    }
+    });
   }
 
-  async function load(url, cb) {
-    try {
-      const doc = await loadDoc(url);
-      
-      let title = cleanTitle(doc.querySelector("title") && doc.querySelector("title").textContent ? doc.querySelector("title").textContent : "");
-      const ogImg = doc.querySelector("meta[property='og:image']");
-      let posterUrl = ogImg ? normalizeUrl(ogImg.getAttribute("content"), manifest.baseUrl) : "";
-      const summary = doc.querySelector("span#summary");
-      let description = summary ? textOf(summary) : "";
-      
-      const isSeries = isSeriesUrl(url) || /series|web-series/i.test(title);
-      const contentType = isSeries ? "series" : "movie";
-      
-      const imdbAnchor = doc.querySelector("div.imdb_left > a");
-      const imdbUrl = imdbAnchor ? imdbAnchor.getAttribute("href") : "";
-      let cinemetaData = null;
-      
-      if (imdbUrl) {
-        const parts = imdbUrl.split("title/");
-        if (parts.length > 1) {
-          const imdbId = parts[1].split("/")[0];
-          if (imdbId) {
-            cinemetaData = await fetchCinemetaData(contentType === "series" ? "tv" : "movie", imdbId);
+  function load(url, cb) {
+    loadDoc(url).then(function(doc) {
+      var titleEl = doc.querySelector("title");
+      var title = cleanTitle(titleEl ? titleEl.textContent : "");
+      var ogImg = doc.querySelector("meta[property='og:image']");
+      var posterUrl = ogImg ? normalizeUrl(ogImg.getAttribute("content"), manifest.baseUrl) : "";
+      var summary = doc.querySelector("span#summary");
+      var description = summary ? textOf(summary) : "";
+      var isSeries = isSeriesUrl(url) || /series|web-series/i.test(title);
+      var contentType = isSeries ? "series" : "movie";
+
+      var imdbAnchor = doc.querySelector("div.imdb_left > a");
+      var imdbUrl = imdbAnchor ? imdbAnchor.getAttribute("href") : "";
+      var cinemetaData = null;
+
+      function loadCinemeta() {
+        if (!imdbUrl) return Promise.resolve(null);
+        var parts = imdbUrl.split("title/");
+        if (parts.length < 2) return Promise.resolve(null);
+        var imdbId = parts[1].split("/")[0];
+        if (!imdbId) return Promise.resolve(null);
+        return fetchCinemetaData(contentType === "series" ? "tv" : "movie", imdbId);      }
+
+      return loadCinemeta().then(function(cm) {
+        cinemetaData = cm;
+        if (cm && cm.meta) {
+          var meta = cm.meta;
+          title = meta.name || title;
+          description = meta.description || description;
+          posterUrl = meta.poster || posterUrl;
+          var bgPoster = meta.background || posterUrl;
+          var genres = meta.genre || [];
+          var cast = meta.cast || [];
+          var imdbRating = meta.imdbRating || "";
+          var year = meta.year ? parseInt(meta.year) : null;
+
+          var actors = [];
+          for (var ci = 0; ci < cast.length; ci++) {
+            var c = cast[ci];
+            var profilePath = c.profile_path || "";
+            actors.push(new Actor({
+              name: c.name || c,
+              role: c.role || c.character || "",
+              image: c.image || (profilePath ? "https://image.tmdb.org/t/p/w500" + profilePath : null)
+            }));
           }
-        }
-      }
-      
-      if (cinemetaData && cinemetaData.meta) {
-        const meta = cinemetaData.meta;
-        title = meta.name || title;
-        description = meta.description || description;
-        posterUrl = meta.poster || posterUrl;
-        const bgPoster = meta.background || posterUrl;
-        const genres = meta.genre || [];
-        const cast = meta.cast || [];
-        const imdbRating = meta.imdbRating || "";
-        const year = meta.year ? parseInt(meta.year) : null;
-        
-        const actors = [];
-        for (let ci = 0; ci < cast.length; ci++) {
-          const c = cast[ci];
-          const profilePath = c.profile_path || "";
-          actors.push(new Actor({
-            name: c.name || c,            role: c.role || c.character || "",
-            image: c.image || (profilePath ? "https://image.tmdb.org/t/p/w500" + profilePath : null)
-          }));
-        }
-        
-        if (isSeries) {
-          const episodesMap = new Map();
-          const buttons = doc.querySelectorAll("a.maxbutton-download-links, a.dl, a.btnn");
-          
-          for (let bi = 0; bi < buttons.length; bi++) {
-            const btn = buttons[bi];
-            let link = btn.getAttribute("href");
-            if (!link) continue;
-            
-            if (link.includes("id=")) {
-              const id = link.split("id=").pop();
-              const bypassed = await bypassProtectedLink(id);
-              if (bypassed) link = bypassed;
-            }
-            
-            const parent = btn.parentElement;
-            const prevSibling = parent ? parent.previousElementSibling : null;
-            const seasonText = prevSibling ? textOf(prevSibling) : "";
-            const seasonMatch = seasonText.match(/(?:Season|S)(\d+)/i);
-            const seasonNum = seasonMatch ? parseInt(seasonMatch[1]) : 1;
-            
-            try {
-              const seasonDoc = await loadDoc(link);
-              const epLinks = Array.from(seasonDoc.querySelectorAll("h3 > a"))
-                .filter(a => !textOf(a).toLowerCase().includes("zip"));
-              
-              let epNum = 1;
-              for (let ei = 0; ei < epLinks.length; ei++) {
-                const epAnchor = epLinks[ei];
-                const epUrl = epAnchor.getAttribute("href");
-                if (!epUrl) continue;
-                
-                const videos = meta.videos || [];
-                let epInfo = null;
-                for (let vi = 0; vi < videos.length; vi++) {
-                  const v = videos[vi];
-                  if (v.season === seasonNum && v.episode === epNum) {
-                    epInfo = v;
-                    break;
-                  }
-                }
-                
-                const epData = {
-                  url: epUrl,  // ← RAW URL STRING (CRITICAL FIX)
-                  name: (epInfo && epInfo.name) || (epInfo && epInfo.title) || "Episode " + epNum,                  season: seasonNum,
-                  episode: epNum,
-                  posterUrl: (epInfo && epInfo.thumbnail) || posterUrl,
-                  description: (epInfo && epInfo.overview) || ""
-                };
-                
-                if (!episodesMap.has(seasonNum)) {
-                  episodesMap.set(seasonNum, new Map());
-                }
-                episodesMap.get(seasonNum).set(epNum, epData);
-                epNum++;
+
+          if (isSeries) {
+            var episodesMap = {};
+            var buttons = doc.querySelectorAll("a.maxbutton-download-links, a.dl, a.btnn");
+            var bi = 0;
+
+            function processButtons() {
+              if (bi >= buttons.length) {
+                return buildEpisodes();
               }
-            } catch (_) {}
-          }
-          
-          const episodes = [];
-          for (const [season, eps] of episodesMap) {
-            for (const [epNum, epData] of eps) {
-              // CRITICAL FIX: Episode.url = RAW URL STRING, NOT JSON.stringify
-              episodes.push(new Episode({
-                name: epData.name,
-                url: epData.url,  // ← RAW STRING, matches Kotlin loadLinks(data: String)
-                season: season,
-                episode: epNum,
-                posterUrl: epData.posterUrl,
-                description: epData.description
-              }));
+              var btn = buttons[bi++];
+              var link = btn.getAttribute("href");
+              if (!link) return processButtons();
+
+              function processLink(finalLink, seasonNum) {
+                return loadDoc(finalLink).then(function(seasonDoc) {
+                  var epLinks = Array.prototype.slice.call(seasonDoc.querySelectorAll("h3 > a"))
+                    .filter(function(a) { return textOf(a).toLowerCase().indexOf("zip") < 0; });
+                  var epNum = 1;
+                  var epPromises = [];
+                  for (var ei = 0; ei < epLinks.length; ei++) {
+                    (function(epAnchor, currentEpNum) {
+                      var epUrl = epAnchor.getAttribute("href");
+                      if (!epUrl) return;
+                      var videos = meta.videos || [];                      var epInfo = null;
+                      for (var vi = 0; vi < videos.length; vi++) {
+                        var v = videos[vi];
+                        if (v.season === seasonNum && v.episode === currentEpNum) {
+                          epInfo = v;
+                          break;
+                        }
+                      }
+                      var epData = {
+                        url: epUrl,
+                        name: (epInfo && epInfo.name) || (epInfo && epInfo.title) || "Episode " + currentEpNum,
+                        season: seasonNum,
+                        episode: currentEpNum,
+                        posterUrl: (epInfo && epInfo.thumbnail) || posterUrl,
+                        description: (epInfo && epInfo.overview) || ""
+                      };
+                      if (!episodesMap[seasonNum]) episodesMap[seasonNum] = {};
+                      episodesMap[seasonNum][currentEpNum] = epData;
+                    })(epLinks[ei], epNum);
+                    epNum++;
+                  }
+                  return Promise.all(epPromises);
+                });
+              }
+
+              if (link.indexOf("id=") >= 0) {
+                var id = link.split("id=").pop();
+                return bypassProtectedLink(id).then(function(bypassed) {
+                  var finalLink = bypassed || link;
+                  var parent = btn.parentElement;
+                  var prevSibling = parent ? parent.previousElementSibling : null;
+                  var seasonText = prevSibling ? textOf(prevSibling) : "";
+                  var seasonMatch = seasonText.match(/(?:Season|S)(\d+)/i);
+                  var seasonNum = seasonMatch ? parseInt(seasonMatch[1]) : 1;
+                  return processLink(finalLink, seasonNum);
+                }).catch(function(_) {}).then(processButtons);
+              } else {
+                var parent = btn.parentElement;
+                var prevSibling = parent ? parent.previousElementSibling : null;
+                var seasonText = prevSibling ? textOf(prevSibling) : "";
+                var seasonMatch = seasonText.match(/(?:Season|S)(\d+)/i);
+                var seasonNum = seasonMatch ? parseInt(seasonMatch[1]) : 1;
+                return processLink(link, seasonNum).catch(function(_) {}).then(processButtons);
+              }
             }
+
+            function buildEpisodes() {
+              var episodes = [];
+              var seasons = Object.keys(episodesMap).map(Number).sort(function(a, b) { return a - b; });
+              for (var si = 0; si < seasons.length; si++) {                var season = seasons[si];
+                var eps = episodesMap[season];
+                var epNums = Object.keys(eps).map(Number).sort(function(a, b) { return a - b; });
+                for (var ei = 0; ei < epNums.length; ei++) {
+                  var epNum = epNums[ei];
+                  var ep = eps[epNum];
+                  episodes.push(new Episode({
+                    name: ep.name,
+                    url: ep.url,
+                    season: ep.season,
+                    episode: ep.episode,
+                    posterUrl: ep.posterUrl,
+                    description: ep.description
+                  }));
+                }
+              }
+              episodes.sort(function(a, b) { return (a.season - b.season) || (a.episode - b.episode); });
+
+              var fallbackEp = new Episode({
+                name: title,
+                url: url,
+                season: 1,
+                episode: 1,
+                posterUrl: posterUrl
+              });
+
+              var item = new MultimediaItem({
+                title: title,
+                url: url,
+                posterUrl: posterUrl,
+                bannerUrl: bgPoster,
+                description: description,
+                year: year,
+                score: imdbRating ? parseFloat(imdbRating) * 10 : null,
+                tags: genres,
+                cast: actors,
+                type: "series",
+                contentType: "series",
+                episodes: episodes.length > 0 ? episodes : [fallbackEp]
+              });
+              cb({ success: true,  item });
+            }
+            return processButtons();
+          } else {
+            var sources = [];
+            var buttons = doc.querySelectorAll("a.dl");
+            for (var bi = 0; bi < buttons.length; bi++) {
+              var btn = buttons[bi];
+              var link = btn.getAttribute("href");
+              if (!link) continue;              if (link.indexOf("id=") >= 0) {
+                var id = link.split("id=").pop();
+                sources.push({ link: link, id: id, bypass: true });
+              } else {
+                sources.push({ link: link, bypass: false });
+              }
+            }
+            var firstUrl = sources.length > 0 ? sources[0].link : url;
+            var item = new MultimediaItem({
+              title: title,
+              url: url,
+              posterUrl: posterUrl,
+              bannerUrl: bgPoster,
+              description: description,
+              year: year,
+              score: imdbRating ? parseFloat(imdbRating) * 10 : null,
+              tags: genres,
+              cast: actors,
+              type: "movie",
+              contentType: "movie",
+              episodes: [new Episode({
+                name: title,
+                url: firstUrl,
+                season: 1,
+                episode: 1,
+                posterUrl: posterUrl
+              })]
+            });
+            cb({ success: true,  item });
           }
-          episodes.sort((a, b) => (a.season - b.season) || (a.episode - b.episode));
-          
-          const fallbackEp = new Episode({
-            name: title,
-            url: url,  // ← RAW STRING
-            season: 1,
-            episode: 1,
-            posterUrl: posterUrl
-          });
-          
-          const item = new MultimediaItem({
-            title: title,
-            url: url,
-            posterUrl: posterUrl,
-            bannerUrl: bgPoster,
-            description: description,
-            year: year,
-            score: imdbRating ? parseFloat(imdbRating) * 10 : null,
-            tags: genres,
-            cast: actors,
-            type: "series",            contentType: "series",
-            episodes: episodes.length > 0 ? episodes : [fallbackEp]
-          });
-          
-          cb({ success: true,  item });
-          return;
         } else {
-          const sources = [];
-          const buttons = doc.querySelectorAll("a.dl");
-          
-          for (let bi = 0; bi < buttons.length; bi++) {
-            const btn = buttons[bi];
-            let link = btn.getAttribute("href");
-            if (!link) continue;
-            
-            if (link.includes("id=")) {
-              const id = link.split("id=").pop();
-              const bypassed = await bypassProtectedLink(id);
-              if (bypassed) link = bypassed;
+          if (isSeries) {
+            var episodes = [];
+            var buttons = doc.querySelectorAll("a.maxbutton-download-links, a.dl, a.btnn");
+            var epNum = 1;
+            for (var bi = 0; bi < buttons.length; bi++) {
+              var btn = buttons[bi];
+              var link = btn.getAttribute("href");
+              if (!link) continue;
+              if (link.indexOf("id=") >= 0) {
+                var id = link.split("id=").pop();
+                (function(currentLink, currentId, currentEpNum) {
+                  bypassProtectedLink(currentId).then(function(bypassed) {
+                    var finalLink = bypassed || currentLink;
+                    var parent = btn.parentElement;
+                    var prevSibling = parent ? parent.previousElementSibling : null;
+                    var seasonText = prevSibling ? textOf(prevSibling) : "";
+                    var seasonMatch = seasonText.match(/(?:Season|S)(\d+)/i);
+                    var seasonNum = seasonMatch ? parseInt(seasonMatch[1]) : 1;
+                    episodes.push(new Episode({                      name: "Episode " + currentEpNum,
+                      url: finalLink,
+                      season: seasonNum,
+                      episode: currentEpNum,
+                      posterUrl: posterUrl
+                    }));
+                  });
+                })(link, id, epNum);
+              } else {
+                var parent = btn.parentElement;
+                var prevSibling = parent ? parent.previousElementSibling : null;
+                var seasonText = prevSibling ? textOf(prevSibling) : "";
+                var seasonMatch = seasonText.match(/(?:Season|S)(\d+)/i);
+                var seasonNum = seasonMatch ? parseInt(seasonMatch[1]) : 1;
+                episodes.push(new Episode({
+                  name: "Episode " + epNum,
+                  url: link,
+                  season: seasonNum,
+                  episode: epNum,
+                  posterUrl: posterUrl
+                }));
+              }
+              epNum++;
             }
-            sources.push(link);  // ← RAW URL STRING
-          }
-          
-          const firstUrl = sources.length > 0 ? sources[0] : url;
-          
-          const item = new MultimediaItem({
-            title: title,
-            url: url,
-            posterUrl: posterUrl,
-            bannerUrl: bgPoster,
-            description: description,
-            year: year,
-            score: imdbRating ? parseFloat(imdbRating) * 10 : null,
-            tags: genres,
-            cast: actors,
-            type: "movie",
-            contentType: "movie",
-            episodes: [new Episode({
+            var fallbackEp = new Episode({
               name: title,
-              url: firstUrl,  // ← RAW STRING, matches Kotlin
+              url: url,
               season: 1,
               episode: 1,
               posterUrl: posterUrl
-            })]
-          });
-          
-          cb({ success: true,  item });
-          return;
-        }
-      }      
-      // Fallback without Cinemeta
-      if (isSeries) {
-        const episodes = [];
-        const buttons = doc.querySelectorAll("a.maxbutton-download-links, a.dl, a.btnn");
-        let epNum = 1;
-        
-        for (let bi = 0; bi < buttons.length; bi++) {
-          const btn = buttons[bi];
-          let link = btn.getAttribute("href");
-          if (!link) continue;
-          
-          if (link.includes("id=")) {
-            const id = link.split("id=").pop();
-            const bypassed = await bypassProtectedLink(id);
-            if (bypassed) link = bypassed;
+            });
+            var item = new MultimediaItem({
+              title: title,
+              url: url,
+              posterUrl: posterUrl,
+              description: description,
+              type: "series",
+              contentType: "series",
+              episodes: episodes.length > 0 ? episodes : [fallbackEp]
+            });
+            cb({ success: true,  item });
+          } else {
+            var sources = [];
+            var buttons = doc.querySelectorAll("a.dl");
+            for (var bi = 0; bi < buttons.length; bi++) {
+              var btn = buttons[bi];
+              var link = btn.getAttribute("href");
+              if (!link) continue;
+              if (link.indexOf("id=") >= 0) {
+                var id = link.split("id=").pop();                sources.push({ link: link, id: id, bypass: true });
+              } else {
+                sources.push({ link: link, bypass: false });
+              }
+            }
+            var firstUrl = sources.length > 0 ? sources[0].link : url;
+            var item = new MultimediaItem({
+              title: title,
+              url: url,
+              posterUrl: posterUrl,
+              description: description,
+              type: "movie",
+              contentType: "movie",
+              episodes: [new Episode({
+                name: title,
+                url: firstUrl,
+                season: 1,
+                episode: 1,
+                posterUrl: posterUrl
+              })]
+            });
+            cb({ success: true,  item });
           }
-          
-          const parent = btn.parentElement;
-          const prevSibling = parent ? parent.previousElementSibling : null;
-          const seasonText = prevSibling ? textOf(prevSibling) : "";
-          const seasonMatch = seasonText.match(/(?:Season|S)(\d+)/i);
-          const seasonNum = seasonMatch ? parseInt(seasonMatch[1]) : 1;
-          
-          episodes.push(new Episode({
-            name: "Episode " + epNum,
-            url: link,  // ← RAW STRING
-            season: seasonNum,
-            episode: epNum,
-            posterUrl: posterUrl
-          }));
-          epNum++;
         }
-        
-        const fallbackEp = new Episode({
-          name: title,
-          url: url,  // ← RAW STRING
-          season: 1,
-          episode: 1,
-          posterUrl: posterUrl
-        });
-        
-        const item = new MultimediaItem({
-          title: title,
-          url: url,
-          posterUrl: posterUrl,
-          description: description,
-          type: "series",
-          contentType: "series",
-          episodes: episodes.length > 0 ? episodes : [fallbackEp]        });
-        
-        cb({ success: true,  item });
-      } else {
-        const sources = [];
-        const buttons = doc.querySelectorAll("a.dl");
-        for (let bi = 0; bi < buttons.length; bi++) {
-          const btn = buttons[bi];
-          let link = btn.getAttribute("href");
-          if (!link) continue;
-          if (link.includes("id=")) {
-            const id = link.split("id=").pop();
-            const bypassed = await bypassProtectedLink(id);
-            if (bypassed) link = bypassed;
-          }
-          sources.push(link);
-        }
-        const firstUrl = sources.length > 0 ? sources[0] : url;
-        
-        const item = new MultimediaItem({
-          title: title,
-          url: url,
-          posterUrl: posterUrl,
-          description: description,
-          type: "movie",
-          contentType: "movie",
-          episodes: [new Episode({
-            name: title,
-            url: firstUrl,  // ← RAW STRING
-            season: 1,
-            episode: 1,
-            posterUrl: posterUrl
-          })]
-        });
-        
-        cb({ success: true,  item });
-      }
-    } catch (e) {
+      });
+    }).catch(function(e) {
       cb({ success: false, errorCode: "LOAD_ERROR", message: String(e && e.message ? e.message : e) });
-    }
+    });
   }
 
-  // === loadStreams - FIXED: Exact Kotlin loadLinks pattern ===
-  async function loadStreams(data, cb) {
+  function loadStreams(data, cb) {
     try {
-      // CRITICAL FIX: data is RAW URL STRING (matches Kotlin loadLinks(data: String))
-      const url = String(data || "").trim();
-      
-      if (!url || !url.startsWith("http")) {
-        return cb({ success: true, data: [] });      }
-      
-      const streams = [];
-      const srcStr = url.toLowerCase();
-      
-      // EXACT Kotlin routing: source.contains("gdflix") || source.contains("gdlink")
-      if (srcStr.includes("gdflix") || srcStr.includes("gdlink")) {
-        await extractGDFlix(url, streams);
-      } else if (srcStr.includes("fastdlserver")) {
-        await extractFastDLServer(url, streams);
+      var url = String(data || "").trim();
+      if (!url || url.indexOf("http") !== 0) {
+        return cb({ success: true,  [] });
+      }
+      var streams = [];
+      var srcStr = url.toLowerCase();
+      var promise = Promise.resolve();
+
+      if (srcStr.indexOf("gdflix") >= 0 || srcStr.indexOf("gdlink") >= 0) {
+        promise = extractGDFlix(url, streams);
+      } else if (srcStr.indexOf("fastdlserver") >= 0) {
+        promise = extractFastDLServer(url, streams);
       } else {
-        await loadGenericExtractor(url, streams);
+        loadGenericExtractor(url, streams);
       }
-      
-      // Deduplicate by URL
-      const seen = new Set();
-      const results = [];
-      for (let i = 0; i < streams.length; i++) {
-        const s = streams[i];
-        if (!s || !s.url || seen.has(s.url)) continue;
-        seen.add(s.url);
-        results.push(s);
-      }
-      
-      cb({ success: true, data: results });
+
+      promise.then(function() {
+        var seen = {};        var results = [];
+        for (var i = 0; i < streams.length; i++) {
+          var s = streams[i];
+          if (!s || !s.url || seen[s.url]) continue;
+          seen[s.url] = true;
+          results.push(s);
+        }
+        cb({ success: true,  results });
+      }).catch(function(e) {
+        cb({ success: false, errorCode: "STREAM_ERROR", message: String(e && e.message ? e.message : e) });
+      });
     } catch (e) {
       cb({ success: false, errorCode: "STREAM_ERROR", message: String(e && e.message ? e.message : e) });
     }
