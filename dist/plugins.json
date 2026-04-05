@@ -39,5 +39,20 @@
       "TvSeries"
     ],
     "url": "https://raw.githubusercontent.com/jujutstukaisen9/sky/main/dist/dev.cncverse.moviezwap.sky"
+  },
+  {
+    "id": "fibwatch",
+    "name": "FibWatch",
+    "version": "1.0.0",
+    "author": "YourName",
+    "description": "Indian Movies and TV Series from Fibwatch",
+    "language": "hi",
+    "baseUrl": "https://fibwatch.biz",
+    "type": "mixed",
+    "supports": [
+      "movie",
+      "series"
+    ],
+    "url": "https://raw.githubusercontent.com/jujutstukaisen9/sky/main/dist/fibwatch.sky"
   }
 ]
