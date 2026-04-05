@@ -41,13 +41,13 @@
     "url": "https://raw.githubusercontent.com/jujutstukaisen9/sky/main/dist/dev.cncverse.moviezwap.sky"
   },
   {
-    "packageName": "dev.cncverse.moviezwap",
+    "packageName": "dev.cncverse.Fibwatch",
     "name": "Fibwatch",
     "version": 1,
     "baseUrl": "https://fibwatch.biz",
     "description": "Indian Movies and TV Series from Fibwatch",
     "authors": [
-      "NivinCNC"
+      "Fibwatch"
     ],
     "languages": [
       "te",
@@ -57,6 +57,6 @@
       "Movie",
       "TvSeries"
     ],
-    "url": "https://raw.githubusercontent.com/jujutstukaisen9/sky/main/dist/dev.cncverse.moviezwap.sky"
+    "url": "https://raw.githubusercontent.com/jujutstukaisen9/sky/main/dist/dev.cncverse.Fibwatch.sky"
   }
 ]
