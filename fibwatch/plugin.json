@@ -1,8 +1,8 @@
 {
   "packageName": "dev.cncverse.moviezwap",
-  "name": "Moviezwap",
+  "name": "Fibwatch",
   "version": 1,
-  "baseUrl": "https://www.moviezwap.toys",
+  "baseUrl": "https://fibwatch.biz",
   "description": "Indian Movies and TV Series from Fibwatch",
   "authors": ["NivinCNC"],
   "languages": ["te", "ta"],
