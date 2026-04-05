@@ -1,71 +1,46 @@
 (function () {
-    /**
-     * ═══════════════════════════════════════════════════════════════════════
-     *  MOVIEZWAP  –  SkyStream Plugin (Sky Gen 2)
-     *  Ported from: MoviezwapProvider.kt  (NivinCNC / CNCVerse-Cloud-Stream)
-     *  Author:  NivinCNC  |  Language: Telugu (te), Tamil (ta)
-     *  Type:    Movie + TvSeries
-     * ═══════════════════════════════════════════════════════════════════════
-     *
-     * KOTLIN → JAVASCRIPT MIGRATION MAP
-     * ──────────────────────────────────
-     *  getMainPage()           → getHome(cb)
-     *  search()                → search(query, cb)
-     *  load()                  → load(url, cb)
-     *  loadLinks()             → loadStreams(url, cb)
-     *  Element.toSearchResult()→ parseMovieLinks() helper
-     *  fixUrl()                → fixUrl() helper
-     *  Qualities.P*            → getQuality() helper string
-     *  newMovieSearchResponse  → new MultimediaItem({ type: "movie" })
-     *  newTvSeriesLoadResponse → new MultimediaItem({ type: "series" })
-     *  newEpisode()            → new Episode({})
-     *  newExtractorLink()      → new StreamResult({})
-     *
-     * @type {import('@skystream/sdk').Manifest}
-     * Note: `manifest` is injected at runtime by the SkyStream host.
-     */
-
-    // ─────────────────────────────────────────────────────────────────────
-    // SECTION 1 · CONSTANTS
-    // ─────────────────────────────────────────────────────────────────────
-
-    /** Standard browser User-Agent — keeps the remote server happy. */
-    const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-               "AppleWebKit/537.36 (KHTML, like Gecko) " +
-               "Chrome/124.0.0.0 Safari/537.36";
+    
+    const UA =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+        "AppleWebKit/537.36 (KHTML, like Gecko) " +
+        "Chrome/124.0.0.0 Safari/537.36";
 
     const BASE_HEADERS = { "User-Agent": UA };
 
     /**
-     * Home-page category list.
-     * Mirrors the Kotlin `mainPage` companion object:
-     *   "$mainUrl/category/Telugu-(2026)-Movies.html" to "Telugu (2026) Movies"  …
-     *
-     * The first entry is labelled "Trending" so SkyStream promotes it to the
-     * Hero Carousel at the top of the dashboard.
+     * Six Kotlin mainPage categories.
+     * "Trending" is a SkyStream reserved name → Hero Carousel at the top.
      */
     const CATEGORIES = [
-        // "Trending" is a reserved SkyStream name → gets Hero Carousel slot
-        { name: "Trending",                 path: "/category/Telugu-(2026)-Movies.html" },
-        { name: "Telugu (2025) Movies",     path: "/category/Telugu-(2025)-Movies.html" },
-        { name: "Tamil (2026) Movies",      path: "/category/Tamil-(2026)-Movies.html" },
-        { name: "Tamil (2025) Movies",      path: "/category/Tamil-(2025)-Movies.html" },
-        { name: "Telugu Dubbed Hollywood",  path: "/category/Telugu-Dubbed-Movies-[Hollywood].html" },
-        { name: "HOT Web Series",           path: "/category/HOT-Web-Series.html" },
+        { name: "Trending",                path: "/category/Telugu-(2026)-Movies.html"             },
+        { name: "Telugu (2025) Movies",    path: "/category/Telugu-(2025)-Movies.html"             },
+        { name: "Tamil (2026) Movies",     path: "/category/Tamil-(2026)-Movies.html"              },
+        { name: "Tamil (2025) Movies",     path: "/category/Tamil-(2025)-Movies.html"              },
+        { name: "Telugu Dubbed Hollywood", path: "/category/Telugu-Dubbed-Movies-[Hollywood].html" },
+        { name: "HOT Web Series",          path: "/category/HOT-Web-Series.html"                   },
     ];
 
     // ─────────────────────────────────────────────────────────────────────
-    // SECTION 2 · UTILITY HELPERS
+    // SECTION 2 · HELPERS
     // ─────────────────────────────────────────────────────────────────────
 
     /**
-     * fixUrl(href)
-     * Mirrors Kotlin CloudStream fixUrl() / fixUrlNull().
-     * Resolves a possibly-relative href to an absolute URL using manifest.baseUrl.
+     * fixUrl(u)  — BUG 4 FIX
+     * Resolves any URL to an absolute one.
+     * Rewrites ALL moviezwap.* host names to manifest.baseUrl so that stale
+     * .surf / .org / .guru links in scraped HTML transparently become .toys.
      */
     function fixUrl(u) {
         if (!u) return "";
         u = u.trim();
+
+        // Normalise any moviezwap domain variant → manifest.baseUrl
+        const mzRe = /^(https?:\/\/(?:www\.)?moviezwap\.\w+)(\/?.*)$/i.exec(u);
+        if (mzRe) {
+            const base = (manifest.baseUrl || "").replace(/\/$/, "");
+            return base + (mzRe[2] || "");
+        }
+
         if (u.startsWith("http")) return u;
         if (u.startsWith("//"))   return "https:" + u;
         const base = (manifest.baseUrl || "").replace(/\/$/, "");
@@ -73,15 +48,11 @@
         return base + "/" + u;
     }
 
-    /**
-     * decodeHtml(str)
-     * Strips HTML tags and decodes the most common HTML entities so that
-     * scraped text is suitable for display.
-     */
+    /** Strip HTML tags + decode entities. */
     function decodeHtml(h) {
         if (!h) return "";
         return h
-            .replace(/<[^>]*>/g, "")
+            .replace(/<[^>]*>/g, " ")
             .replace(/&amp;/g,   "&")
             .replace(/&lt;/g,    "<")
             .replace(/&gt;/g,    ">")
@@ -89,15 +60,11 @@
             .replace(/&#039;/g,  "'")
             .replace(/&apos;/g,  "'")
             .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(parseInt(d, 10)))
+            .replace(/\s{2,}/g,  " ")
             .trim();
     }
 
-    /**
-     * getQuality(text)
-     * Mirrors Kotlin quality detection:
-     *   Qualities.P1080 / P720 / P480 / P360 / Unknown
-     * Parses a link label or filename for a resolution badge.
-     */
+    /** Derive a quality label from any text string. */
     function getQuality(text) {
         if (!text) return "Auto";
         const t = text.toLowerCase();
@@ -112,117 +79,92 @@
         return "Auto";
     }
 
-    /**
-     * isSeries(title)
-     * Mirrors Kotlin regex in toSearchResult():
-     *   Regex("(?i)(season|episodes?|eps|all episodes|web series)")
-     */
+    /** True when a title looks like a series / web-series. */
     function isSeries(title) {
         return /\b(season|episodes?|ep\.?s?|all\s+episodes?|web\s+series)\b/i.test(title || "");
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // SECTION 3 · HTML SCRAPING HELPERS
-    // ─────────────────────────────────────────────────────────────────────
-
-    /**
-     * parseMovieLinks(html, seen)
-     * Mirrors Kotlin Element.toSearchResult():
-     *   document.select("a[href*='/movie/']")
-     *
-     * Scans raw HTML for every anchor whose href contains "/movie/".
-     * Returns an array of MultimediaItem objects, deduplicated by `seen` Set.
-     *
-     * @param {string}  html  - Raw page HTML
-     * @param {Set}     seen  - URL dedup set (mutated in-place)
-     */
-    function parseMovieLinks(html, seen) {
-        const items = [];
-        // Match anchors with /movie/ in href — mirrors Kotlin selector
-        const re = /<a\s[^>]*href="([^"]*\/movie\/[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
-        let m;
-
-        while ((m = re.exec(html)) !== null) {
-            const href = m[1].trim();
-            if (!href) continue;
-
-            const fullUrl = fixUrl(href);
-            if (seen.has(fullUrl)) continue;
-            seen.add(fullUrl);
-
-            // Inner text of the anchor as the title
-            let title = decodeHtml(m[2]);
-
-            // Kotlin fallback: derive from URL slug when link text is empty
-            if (!title || title.length < 2) {
-                title = href
-                    .split("/").pop()
-                    .replace(/\.html?$/, "")
-                    .replace(/-/g, " ")
-                    .replace(/\b\w/g, c => c.toUpperCase())
-                    .trim();
-            }
-
-            if (!title || title.length < 2) continue;
-
-            items.push(new MultimediaItem({
-                title:     title,
-                url:       fullUrl,
-                posterUrl: "",           // poster is only on the detail page
-                type:      isSeries(title) ? "series" : "movie",
-            }));
-        }
-
-        return items;
-    }
-
     /**
      * buildPaginatedUrl(basePath, page)
-     * Mirrors Kotlin pagination logic inside getMainPage():
-     *   page == 1  → /category/Name.html
-     *   page > 1   → /category/Name/2.html
+     * Kotlin pagination mirror:  Name.html → Name/2.html
      */
     function buildPaginatedUrl(basePath, page) {
         const base = (manifest.baseUrl || "").replace(/\/$/, "");
         if (page <= 1) return base + basePath;
-        return base + basePath.replace(/\.html$/, "") + "/" + page + ".html";
+        return base + basePath.replace(/\.html$/i, "") + "/" + page + ".html";
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // SECTION 3 · parseMovieLinks  — BUG 1 FIX
+    // ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * v1 bug: only matched  a[href*='/movie/']  which hit sidebar "Movies of
+     * the Day" widgets — so every category showed the same 2 items.
+     *
+     * v2 fix: primary pattern is  getlinks_XXXXX.html  (real .toys file URLs),
+     * with /movie/ kept as a secondary fallback for pages that still use it.
+     */
+    function parseMovieLinks(html, seen) {
+        const items = [];
+
+        function pushItem(href, innerHtml) {
+            href = (href || "").trim();
+            if (!href) return;
+
+            const fullUrl = fixUrl(href);
+            if (seen.has(fullUrl)) return;
+            seen.add(fullUrl);
+
+            let title = decodeHtml(innerHtml);
+            if (!title || title.length < 2) {
+                title = href.split("/").pop()
+                    .replace(/\.html?$/i, "")
+                    .replace(/_\d+$/,     "")   // strip numeric suffix from getlinks_
+                    .replace(/-/g, " ")
+                    .replace(/\b\w/g, c => c.toUpperCase())
+                    .trim();
+            }
+            if (!title || title.length < 2) return;
+
+            items.push(new MultimediaItem({
+                title,
+                url:       fullUrl,
+                posterUrl: "",
+                type:      isSeries(title) ? "series" : "movie",
+            }));
+        }
+
+        // PRIMARY: getlinks_XXXXX.html  — current .toys per-file page format
+        const priRe = /<a\s[^>]*href="([^"]*getlinks_\d+\.html[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+        let m;
+        while ((m = priRe.exec(html)) !== null) pushItem(m[1], m[2]);
+
+        // SECONDARY: /movie/ paths — legacy fallback (also used by search results)
+        const secRe = /<a\s[^>]*href="([^"]*\/movie\/[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+        while ((m = secRe.exec(html)) !== null) pushItem(m[1], m[2]);
+
+        return items;
     }
 
     // ─────────────────────────────────────────────────────────────────────
     // SECTION 4 · getHome
-    //             Mirrors Kotlin getMainPage()
     // ─────────────────────────────────────────────────────────────────────
 
-    /**
-     * getHome(cb)
-     *
-     * Fetches the first page of every category from the CATEGORIES list and
-     * returns them keyed by category name.
-     *
-     * SkyStream automatically promotes the "Trending" key to the Hero Carousel;
-     * every other key becomes a horizontal thumbnail row.
-     */
     async function getHome(cb) {
         try {
             const homeData = {};
-
             for (const cat of CATEGORIES) {
                 try {
                     const url = buildPaginatedUrl(cat.path, 1);
                     const res = await http_get(url, BASE_HEADERS);
                     if (res.status !== 200) continue;
-
                     const items = parseMovieLinks(res.body, new Set());
-                    if (items.length > 0) {
-                        homeData[cat.name] = items;
-                    }
+                    if (items.length > 0) homeData[cat.name] = items;
                 } catch (e) {
-                    // Non-fatal: skip failed category, keep the rest
-                    console.error("[Moviezwap] getHome category failed [" +
-                                  cat.name + "]: " + e.message);
+                    console.error("[Moviezwap] getHome [" + cat.name + "]: " + e.message);
                 }
             }
-
             cb({ success: true, data: homeData });
         } catch (e) {
             cb({ success: false, errorCode: "HOME_ERROR", message: e.message });
@@ -231,195 +173,179 @@
 
     // ─────────────────────────────────────────────────────────────────────
     // SECTION 5 · search
-    //             Mirrors Kotlin search()
     // ─────────────────────────────────────────────────────────────────────
 
-    /**
-     * search(query, cb)
-     *
-     * Kotlin: val fixedQuery = query.replace(" ", "+")
-     *         val searchUrl  = "$mainUrl/search.php?q=$fixedQuery"
-     *         document.select("a[href*='/movie/']").mapNotNull { toSearchResult() }
-     */
     async function search(query, cb) {
         try {
             const fixedQuery = query.trim().replace(/\s+/g, "+");
             const searchUrl  = (manifest.baseUrl || "").replace(/\/$/, "") +
                                "/search.php?q=" + encodeURIComponent(fixedQuery);
-
             const res = await http_get(searchUrl, BASE_HEADERS);
             if (res.status !== 200) return cb({ success: true, data: [] });
-
-            const items = parseMovieLinks(res.body, new Set());
-            cb({ success: true, data: items });
+            cb({ success: true, data: parseMovieLinks(res.body, new Set()) });
         } catch (e) {
             cb({ success: false, errorCode: "SEARCH_ERROR", message: e.message });
         }
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // SECTION 6 · load
-    //             Mirrors Kotlin load()
+    // SECTION 6 · load  — BUG 2 + BUG 4 FIX
     // ─────────────────────────────────────────────────────────────────────
 
     /**
-     * load(url, cb)
+     * Supports two page structures:
      *
-     * Full detail-page scraper. Produces a MultimediaItem with:
-     *   - title   (h2 > title tag fallback)
-     *   - poster  (img[src*='/poster/'] > og:image fallback)
-     *   - description (td after "Desc/Plot" > first <p> fallback)
-     *   - year    (td after "Release Date" or "Category")
+     *   STRUCTURE A – getlinks_XXXXX.html  (current .toys)
+     *     Table rows:  <td>File Name :</td> <td>Movie Title (2024) 720p.mp4</td>
+     *                  <td>File Size :</td> <td>395 MB</td>
+     *     One video file per page → single Episode pointing back to this URL.
+     *     loadStreams() will follow the extlinks_*.html link found on this page.
      *
-     * Series branch: extracts episodes from div.catList a[href*='/movie/']
-     *                and creates one Episode per link.
-     * Movie branch:  creates a single Episode with the movie URL so that
-     *                loadStreams can scrape download links on demand.
+     *   STRUCTURE B – /movie/*.html  (legacy .surf pages, or future mirrors)
+     *     h2 title, img with src containing poster, Desc/Plot td, Release Date td,
+     *     div.catList episode links for series.
+     *
+     * fixUrl() normalises any stale domain before fetching.
      */
     async function load(url, cb) {
         try {
-            const res = await http_get(url, BASE_HEADERS);
+            const safeUrl = fixUrl(url);
+            const res = await http_get(safeUrl, BASE_HEADERS);
             if (res.status !== 200) {
                 return cb({ success: false, errorCode: "SITE_OFFLINE" });
             }
 
-            const html = res.body;
+            const html           = res.body;
+            const isGetlinksPage = /getlinks_\d+/i.test(safeUrl);
 
-            // ── Title ──────────────────────────────────────────────────
-            // Kotlin: document.selectFirst("h2")?.text()
-            //      ?: document.selectFirst("title")?.text()
-            //                  ?.substringBefore("-")
+            // ── Title ────────────────────────────────────────────────
             let title = null;
 
-            const h2M = /<h2[^>]*>([\s\S]*?)<\/h2>/i.exec(html);
-            if (h2M) title = decodeHtml(h2M[1]);
-
-            if (!title || title.length < 2) {
-                const titleTagM = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
-                if (titleTagM) title = decodeHtml(titleTagM[1]).split("-")[0].trim();
+            if (isGetlinksPage) {
+                // Table row: "File Name : <filename.mp4>"
+                const fnM =
+                    /<td[^>]*>[^<]*File\s*Name\s*:?\s*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/i.exec(html) ||
+                    /<strong>[^<]*File\s*Name[^<]*<\/strong>[^:]*:?\s*([\s\S]*?)(?:<br|<\/td|<\/p)/i.exec(html) ||
+                    /<td[^>]*>([^<]{10,}(?:\.mp4|\.mkv|\.avi|\.3gp|\.webm)[^<]*)<\/td>/i.exec(html);
+                if (fnM) title = decodeHtml(fnM[1]);
             }
 
-            if (!title || title.length < 2) {
-                return cb({
-                    success: false,
-                    errorCode: "PARSE_ERROR",
-                    message: "Could not extract title from page"
-                });
+            // Universal fallback cascade
+            if (!title || title.length < 3) {
+                const h2M = /<h2[^>]*>([\s\S]*?)<\/h2>/i.exec(html);
+                if (h2M) title = decodeHtml(h2M[1]);
+            }
+            if (!title || title.length < 3) {
+                const h1M = /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html);
+                if (h1M) title = decodeHtml(h1M[1]);
+            }
+            if (!title || title.length < 3) {
+                const ogM = /<meta[^>]+property="og:title"[^>]+content="([^"]+)"/i.exec(html);
+                if (ogM) title = decodeHtml(ogM[1]);
+            }
+            if (!title || title.length < 3) {
+                const ttM = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+                if (ttM) title = decodeHtml(ttM[1]).split("|")[0].split("-")[0].split("–")[0].trim();
+            }
+            if (!title || title.length < 3) {
+                // Last resort: slug
+                title = safeUrl.split("/").pop()
+                    .replace(/\.html?$/i, "")
+                    .replace(/_\d+$/,     "")
+                    .replace(/-/g, " ")
+                    .replace(/\b\w/g, c => c.toUpperCase())
+                    .trim();
+            }
+            if (!title || title.length < 3) {
+                return cb({ success: false, errorCode: "PARSE_ERROR", message: "Cannot find title" });
             }
 
-            // ── Poster ────────────────────────────────────────────────
-            // Kotlin: document.selectFirst("img[src*='/poster/']")?.attr("src")
+            // ── Poster ───────────────────────────────────────────────
             let poster = "";
-
-            const posterM = /<img[^>]+src="([^"]*\/poster\/[^"]*)"[^>]*>/i.exec(html);
-            if (posterM) {
-                poster = fixUrl(posterM[1]);
-            } else {
-                // Fallback: og:image meta tag
-                const ogM = /<meta[^>]+property="og:image"[^>]+content="([^"]+)"/i.exec(html);
-                if (ogM) poster = ogM[1];
+            const postM = /<img[^>]+src="([^"]*\/poster\/[^"]*)"[^>]*>/i.exec(html);
+            if (postM) poster = fixUrl(postM[1]);
+            if (!poster) {
+                const ogIM = /<meta[^>]+property="og:image"[^>]+content="([^"]+)"/i.exec(html);
+                if (ogIM) poster = ogIM[1];
             }
 
-            // ── Description ───────────────────────────────────────────
-            // Kotlin: document.select("td:contains(Desc/Plot) + td").text()
+            // ── Description ──────────────────────────────────────────
             let description = "";
-
-            const descM = /<td[^>]*>[^<]*(?:Desc\/Plot|Description|Plot)[^<]*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/i.exec(html);
-            if (descM) {
-                description = decodeHtml(descM[1]);
+            if (isGetlinksPage) {
+                const fsM =
+                    /<td[^>]*>[^<]*File\s*Size\s*:?\s*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/i.exec(html) ||
+                    /<strong>[^<]*File\s*Size[^<]*<\/strong>[^:]*:?\s*([\s\S]*?)(?:<br|<\/td|<\/p)/i.exec(html);
+                if (fsM) description = "File Size: " + decodeHtml(fsM[1]);
+                const q = getQuality(title);
+                if (q !== "Auto") description += (description ? " · " : "") + "Quality: " + q;
             } else {
-                // Fallback: first <p> with meaningful content
-                const pM = /<p[^>]*>([\s\S]*?)<\/p>/i.exec(html);
-                if (pM) description = decodeHtml(pM[1]);
+                const descM = /<td[^>]*>[^<]*(?:Desc\/Plot|Description|Plot)[^<]*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/i.exec(html);
+                if (descM) description = decodeHtml(descM[1]);
+                if (!description) {
+                    const pM = /<p[^>]*>([\s\S]{30,}?)<\/p>/i.exec(html);
+                    if (pM) description = decodeHtml(pM[1]);
+                }
             }
 
-            // ── Year ──────────────────────────────────────────────────
-            // Kotlin: document.select("td:contains(Release Date) + td").text()
-            //      .ifEmpty { document.select("td:contains(Category) + td").text() }
+            // ── Year ─────────────────────────────────────────────────
             let year = null;
+            const yrFromTitle = /\((\d{4})\)/.exec(title);
+            if (yrFromTitle) {
+                year = parseInt(yrFromTitle[1]);
+            } else {
+                const rdM  = /<td[^>]*>[^<]*Release\s+Date[^<]*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/i.exec(html);
+                const catM = /<td[^>]*>[^<]*Category[^<]*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/i.exec(html);
+                const yrSrc = rdM  ? rdM[1].replace(/<[^>]*>/g, "")
+                            : catM ? catM[1].replace(/<[^>]*>/g, "") : "";
+                const yrM2 = /(\d{4})/.exec(yrSrc);
+                if (yrM2) year = parseInt(yrM2[1]);
+            }
 
-            const rdM  = /<td[^>]*>[^<]*Release\s+Date[^<]*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/i.exec(html);
-            const catM = /<td[^>]*>[^<]*Category[^<]*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/i.exec(html);
-
-            const yearSrc = rdM  ? rdM[1].replace(/<[^>]*>/g, "")
-                          : catM ? catM[1].replace(/<[^>]*>/g, "") : "";
-            const yearM = /(\d{4})/.exec(yearSrc);
-            if (yearM) year = parseInt(yearM[1]);
-
-            // ── Series vs Movie detection ─────────────────────────────
+            // ── Series detection ─────────────────────────────────────
             const seriesFlag = isSeries(title);
 
-            // ── Series branch ─────────────────────────────────────────
-            // Kotlin: val seasonLinks = document.select("div.catList a[href*='/movie/']")
-            //         if (isSeries && seasonLinks.isNotEmpty()) { … }
-            if (seriesFlag) {
-                // Scope to div.catList if present; otherwise fall back to full page
-                const catListM = /<div[^>]*class="[^"]*catList[^"]*"[^>]*>([\s\S]*?)<\/div>/i.exec(html);
-                const searchScope = catListM ? catListM[1] : html;
-
+            // ── Series branch (legacy pages with div.catList) ────────
+            if (seriesFlag && !isGetlinksPage) {
+                const clM  = /<div[^>]*class="[^"]*catList[^"]*"[^>]*>([\s\S]*?)<\/div>/i.exec(html);
+                const scope = clM ? clM[1] : html;
                 const episodes = [];
-                const epRe = /<a\s[^>]*href="([^"]*\/movie\/[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
-                let ep;
-                let epIndex = 0;
-
-                while ((ep = epRe.exec(searchScope)) !== null) {
+                const epRe = /<a\s[^>]*href="([^"]*(?:getlinks_\d+|\/movie\/)[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+                let ep; let idx = 0;
+                while ((ep = epRe.exec(scope)) !== null) {
                     const epHref  = ep[1].trim();
-                    const epLabel = decodeHtml(ep[2]) || ("Episode " + (epIndex + 1));
-                    const epUrl   = fixUrl(epHref);
-
-                    // Kotlin: Regex("""Season\s*(\d+)""").find(episodeTitle)
+                    const epLabel = decodeHtml(ep[2]) || ("Episode " + (idx + 1));
                     const snM = /Season\s*(\d+)/i.exec(epLabel);
-                    // Kotlin: Regex("""Eps?\s*\(?(\d+)""").find(episodeTitle)
                     const enM = /Eps?\s*\(?(\d+)/i.exec(epLabel);
-
-                    const season  = snM ? parseInt(snM[1]) : 1;
-                    const epNum   = enM ? parseInt(enM[1]) : epIndex + 1;
-
                     episodes.push(new Episode({
                         name:    epLabel,
-                        url:     epUrl,  // episode page → scraped in loadStreams
-                        season:  season,
-                        episode: epNum,
+                        url:     fixUrl(epHref),
+                        season:  snM ? parseInt(snM[1]) : 1,
+                        episode: enM ? parseInt(enM[1]) : idx + 1,
                     }));
-
-                    epIndex++;
+                    idx++;
                 }
-
                 if (episodes.length > 0) {
                     return cb({
                         success: true,
                         data: new MultimediaItem({
-                            title:       title,
-                            url:         url,
-                            posterUrl:   poster,
-                            type:        "series",
-                            description: description || undefined,
-                            year:        year || undefined,
-                            episodes:    episodes,
+                            title, url: safeUrl, posterUrl: poster, type: "series",
+                            description: description || undefined, year: year || undefined,
+                            episodes,
                         })
                     });
                 }
             }
 
-            // ── Movie branch ──────────────────────────────────────────
-            // Single Episode wrapping the movie URL; loadStreams scrapes
-            // it on playback just as Kotlin loadLinks(data) does.
+            // ── Movie / single-file branch ───────────────────────────
             cb({
                 success: true,
                 data: new MultimediaItem({
-                    title:       title,
-                    url:         url,
-                    posterUrl:   poster,
+                    title, url: safeUrl, posterUrl: poster,
                     type:        seriesFlag ? "series" : "movie",
                     description: description || undefined,
                     year:        year || undefined,
                     episodes: [
-                        new Episode({
-                            name:    "Full Movie",
-                            url:     url,
-                            season:  1,
-                            episode: 1,
-                        })
+                        new Episode({ name: "Full Movie", url: safeUrl, season: 1, episode: 1 })
                     ],
                 })
             });
@@ -430,95 +356,120 @@
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // SECTION 7 · loadStreams
-    //             Mirrors Kotlin loadLinks()
+    // SECTION 7 · loadStreams  — BUG 3 + BUG 4 FIX
     // ─────────────────────────────────────────────────────────────────────
 
     /**
-     * loadStreams(url, cb)
+     * Three-chain download resolution (newest → oldest):
      *
-     * Receives the detail/episode page URL (set as Episode.url in load()).
+     *   CHAIN A — extlinks_*.html  (primary, current .toys)
+     *     getlinks_*.html page → link to extlinks_*.html
+     *                          → external file host link
      *
-     * Kotlin pipeline:
-     *  1. document.select("a[href*='dwload.php']")
-     *             .map { href.replace("dwload.php", "download.php") }
-     *  2. For each link → fetch download.php page
-     *  3. downloadPage.selectFirst("a:contains(Fast Download Server)")?.attr("href")
-     *     → that is the actual playable file link.
+     *   CHAIN B — dwload.php / download.php  (legacy .surf style)
+     *     dwload.php link → download.php page → "Fast Download Server" anchor
      *
-     * Quality is read from the link label text (320p / 480p / 720p / 1080p).
+     *   CHAIN C — direct sweep  (last resort)
+     *     Any non-moviezwap link on the page matching a video host pattern
      */
     async function loadStreams(url, cb) {
         try {
-            const res = await http_get(url, BASE_HEADERS);
+            const safeUrl = fixUrl(url);
+            const res = await http_get(safeUrl, BASE_HEADERS);
             if (res.status !== 200) return cb({ success: true, data: [] });
 
-            const html     = res.body;
-            const results  = [];
-            const seenDl   = new Set();   // dedup download.php pages
-            const seenFinal= new Set();   // dedup final stream URLs
+            const html    = res.body;
+            const results = [];
+            const seen    = new Set();
 
-            // ── Step 1: Find dwload.php links ─────────────────────────
-            // Kotlin: document.select("a[href*='dwload.php']")
-            const dwRe = /<a\s[^>]*href="([^"]*dwload\.php[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+            // ── CHAIN A · extlinks_*.html ─────────────────────────────
+            const extRe = /href="([^"]*extlinks_\d+\.html[^"]*)"/gi;
             let m;
+            while ((m = extRe.exec(html)) !== null) {
+                const extUrl = fixUrl(m[1]);
+                if (seen.has(extUrl)) continue;
+                seen.add(extUrl);
 
-            while ((m = dwRe.exec(html)) !== null) {
-                // Kotlin: it.attr("href").replace("dwload.php", "download.php")
-                const dlPageUrl = fixUrl(m[1].replace("dwload.php", "download.php"));
-                const linkLabel = decodeHtml(m[2]);
-
-                if (seenDl.has(dlPageUrl)) continue;
-                seenDl.add(dlPageUrl);
-
-                const quality = getQuality(linkLabel);
-
-                // ── Step 2: Fetch download.php page ───────────────────
-                let actualUrl = null;
                 try {
-                    const dlRes = await http_get(dlPageUrl, {
-                        ...BASE_HEADERS,
-                        Referer: url,
-                    });
+                    const extRes = await http_get(extUrl, { ...BASE_HEADERS, Referer: safeUrl });
+                    if (extRes.status !== 200) continue;
 
-                    if (dlRes.status === 200) {
-                        const dlHtml = dlRes.body;
+                    const extHtml   = extRes.body;
+                    const extLinkRe = /href="(https?:\/\/[^"]+)"/gi;
+                    let lm;
+                    while ((lm = extLinkRe.exec(extHtml)) !== null) {
+                        const finalUrl = lm[1];
+                        if (/moviezwap|telegram\.me|t\.me|whatsapp/i.test(finalUrl)) continue;
+                        if (seen.has(finalUrl)) continue;
+                        seen.add(finalUrl);
 
-                        // Primary: "Fast Download Server" anchor
-                        // Kotlin: downloadPage.selectFirst("a:contains(Fast Download Server)")
-                        const fastM = /href="([^"]+)"[^>]*>[^<]*Fast\s+Download\s+Server[^<]*<\//i.exec(dlHtml);
-                        if (fastM) actualUrl = fastM[1];
-
-                        // Fallback A: direct video file link (.mp4 / .mkv / .m3u8)
-                        if (!actualUrl) {
-                            const vidM = /href="(https?:\/\/[^"]+\.(mp4|mkv|avi|m3u8)[^"]*)"/i.exec(dlHtml);
-                            if (vidM) actualUrl = vidM[1];
-                        }
-
-                        // Fallback B: any external http link on the download page
-                        if (!actualUrl) {
-                            const anyM = /href="(https?:\/\/(?!(?:www\.)?moviezwap)[^"]+)"/i.exec(dlHtml);
-                            if (anyM) actualUrl = anyM[1];
-                        }
+                        results.push(new StreamResult({
+                            url:     finalUrl,
+                            quality: getQuality(finalUrl + " " + safeUrl),
+                            headers: { "User-Agent": UA, "Referer": extUrl },
+                        }));
                     }
-                } catch (dlErr) {
-                    console.error("[Moviezwap] download.php fetch failed: " + dlErr.message);
+                } catch (e) {
+                    console.error("[Moviezwap] Chain A extlinks error: " + e.message);
                 }
+            }
 
-                // Fallback C: use the download.php URL itself when page scraping fails
-                if (!actualUrl) actualUrl = dlPageUrl;
+            // ── CHAIN B · dwload.php → download.php ──────────────────
+            const dwRe = /href="([^"]*dwload\.php[^"]*)"/gi;
+            while ((m = dwRe.exec(html)) !== null) {
+                const dlPageUrl = fixUrl(m[1].replace("dwload.php", "download.php"));
+                if (seen.has(dlPageUrl)) continue;
+                seen.add(dlPageUrl);
 
-                if (!actualUrl || seenFinal.has(actualUrl)) continue;
-                seenFinal.add(actualUrl);
+                try {
+                    const dlRes = await http_get(dlPageUrl, { ...BASE_HEADERS, Referer: safeUrl });
+                    if (dlRes.status !== 200) continue;
+                    const dlHtml = dlRes.body;
 
-                results.push(new StreamResult({
-                    url:     actualUrl,
-                    quality: quality,
-                    headers: {
-                        "User-Agent": UA,
-                        "Referer":    dlPageUrl,
-                    },
-                }));
+                    let finalUrl = null;
+                    const fastM = /href="([^"]+)"[^>]*>[^<]*Fast\s+Download\s+Server[^<]*</i.exec(dlHtml);
+                    if (fastM) finalUrl = fastM[1];
+                    if (!finalUrl) {
+                        const vidM = /href="(https?:\/\/[^"]+\.(mp4|mkv|avi|m3u8)[^"]*)"/i.exec(dlHtml);
+                        if (vidM) finalUrl = vidM[1];
+                    }
+                    if (!finalUrl) {
+                        const anyM = /href="(https?:\/\/(?!(?:www\.)?moviezwap)[^"]+)"/i.exec(dlHtml);
+                        if (anyM) finalUrl = anyM[1];
+                    }
+                    if (!finalUrl) finalUrl = dlPageUrl;
+                    if (seen.has(finalUrl)) continue;
+                    seen.add(finalUrl);
+
+                    results.push(new StreamResult({
+                        url:     finalUrl,
+                        quality: getQuality(safeUrl),
+                        headers: { "User-Agent": UA, "Referer": dlPageUrl },
+                    }));
+                } catch (e) {
+                    console.error("[Moviezwap] Chain B dwload error: " + e.message);
+                }
+            }
+
+            // ── CHAIN C · Direct sweep (last resort) ──────────────────
+            if (results.length === 0) {
+                const directRe = /href="(https?:\/\/[^"]+)"/gi;
+                while ((m = directRe.exec(html)) !== null) {
+                    const link = m[1];
+                    if (/moviezwap|telegram\.me|t\.me|whatsapp/i.test(link)) continue;
+                    // Only pick direct video files or known hosting services
+                    const isVideoFile = /\.(mp4|mkv|avi|m3u8|3gp|webm)(\?|$)/i.test(link);
+                    const isKnownHost = /drive\.google|mega\.nz|pixeldrain|gofile\.io|mediafire|terabox|1fichier/i.test(link);
+                    if (!isVideoFile && !isKnownHost) continue;
+                    if (seen.has(link)) continue;
+                    seen.add(link);
+
+                    results.push(new StreamResult({
+                        url:     link,
+                        quality: getQuality(link + " " + safeUrl),
+                        headers: { "User-Agent": UA, "Referer": safeUrl },
+                    }));
+                }
             }
 
             cb({ success: true, data: results });
@@ -528,7 +479,7 @@
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // SECTION 8 · EXPORT  (required by SkyStream runtime)
+    // SECTION 8 · EXPORT
     // ─────────────────────────────────────────────────────────────────────
 
     globalThis.getHome = getHome;
