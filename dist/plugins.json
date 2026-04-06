@@ -58,5 +58,28 @@
       "TvSeries"
     ],
     "url": "https://raw.githubusercontent.com/jujutstukaisen9/sky/main/dist/dev.cncverse.Fibwatch.sky"
+  },
+  {
+    "packageName": "dev.akash.stars.tellybiz",
+    "name": "TellyBiz",
+    "version": 1,
+    "baseUrl": "https://tellybiz.in",
+    "description": "Stream movies and shows from TellyBiz",
+    "authors": [
+      "YourName"
+    ],
+    "languages": [
+      "en",
+      "hi",
+      "te",
+      "ta",
+      "ml",
+      "kn"
+    ],
+    "categories": [
+      "Movie",
+      "TvSeries"
+    ],
+    "url": "https://raw.githubusercontent.com/jujutstukaisen9/sky/main/dist/dev.akash.stars.tellybiz.sky"
   }
 ]
