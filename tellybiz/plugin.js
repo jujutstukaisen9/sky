@@ -1,336 +1,445 @@
-(function () {
+(function() {
   /**
-   * @type {import('@skystream/sdk').Manifest}
+   * TellyBiz Plugin for SkyStream
+   * Scrapes movies and TV shows from tellybiz.in
    */
-  // manifest is provided by SkyStream runtime.
 
-  const UA =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+  const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+  
+  const BASE_HEADERS = {
+    "User-Agent": UA,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": `${manifest.baseUrl}/`
+  };
 
-  function baseUrl() {
-    return (manifest && manifest.baseUrl ? String(manifest.baseUrl) : "https://tellybiz.in").replace(/\/$/, "");
-  }
+  // --- Helper Functions ---
 
-  function absUrl(input, base) {
-    const raw = String(input || "").trim();
+  function normalizeUrl(url, base) {
+    if (!url) return "";
+    const raw = String(url).trim();
     if (!raw) return "";
-    if (raw.startsWith("//")) return "https:" + raw;
+    if (raw.startsWith("//")) return `https:${raw}`;
     if (/^https?:\/\//i.test(raw)) return raw;
-    const root = String(base || baseUrl()).replace(/\/$/, "");
-    if (raw.startsWith("/")) return root + raw;
-    return root + "/" + raw;
+    if (raw.startsWith("/")) return `${base}${raw}`;
+    return `${base}/${raw}`;
   }
 
-  function decodeHtml(str) {
-    return String(str || "")
+  function htmlDecode(text) {
+    if (!text) return "";
+    return String(text)
       .replace(/&amp;/g, "&")
       .replace(/&quot;/g, '"')
-      .replace(/&#039;/g, "'")
-      .replace(/&apos;/g, "'")
+      .replace(/&#39;/g, "'")
       .replace(/&lt;/g, "<")
       .replace(/&gt;/g, ">")
-      .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+      .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code, 10)));
   }
 
-  function textOf(node) {
-    return decodeHtml((node && node.textContent ? node.textContent : "").replace(/\s+/g, " ").trim());
+  function textOf(el) {
+    return htmlDecode((el?.textContent || "").replace(/\s+/g, " ").trim());
   }
 
-  function attr(node, ...names) {
-    if (!node || !names) return "";
-    for (const n of names) {
-      const v = node.getAttribute(n);
+  function getAttr(el, ...attrs) {
+    if (!el) return "";
+    for (const attr of attrs) {
+      const v = el.getAttribute(attr);
       if (v && String(v).trim()) return String(v).trim();
     }
     return "";
   }
 
-  function toIntQuality(label) {
-    const t = String(label || "").toLowerCase();
-    if (t.includes("4k") || t.includes("2160")) return 2160;
-    const m = t.match(/(\d{3,4})p/);
-    if (m) return Number(m[1]);
-    if (t.includes("hd")) return 720;
-    return 0;
-  }
-
-  function qualityLabel(labelOrUrl) {
-    const t = String(labelOrUrl || "").toLowerCase();
-    if (t.includes("4k") || t.includes("2160")) return "4K";
-    if (t.includes("1080")) return "1080p";
-    if (t.includes("720")) return "720p";
-    if (t.includes("480")) return "480p";
+  function extractQuality(text) {
+    const t = String(text || "").toLowerCase();
+    if (t.includes("2160") || t.includes("4k") || t.includes("ultra")) return "2160p";
+    if (t.includes("1080") || t.includes("full")) return "1080p";
+    if (t.includes("720") || t.includes("hd")) return "720p";
+    if (t.includes("480") || t.includes("sd")) return "480p";
     if (t.includes("360")) return "360p";
-    if (t.includes("240")) return "240p";
     return "Auto";
   }
 
-  async function request(url, extraHeaders = {}) {
-    const headers = Object.assign(
-      {
-        "User-Agent": UA,
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        Referer: baseUrl() + "/",
-      },
-      extraHeaders || {}
-    );
+  // --- Network Helpers ---
 
-    try {
-      return await http_get(url, { headers });
-    } catch (_) {
-      return await http_get(url, headers);
+  async function request(url, headers = {}) {
+    return http_get(url, { headers: Object.assign({}, BASE_HEADERS, headers) });
+  }
+
+  async function loadDoc(url, headers = {}) {
+    const res = await request(url, headers);
+    return await parseHtml(res.body);
+  }
+
+  // --- Parsers ---
+
+  function parseMovieItem(el) {
+    if (!el) return null;
+
+    // Try multiple selectors for the link
+    const anchor = el.querySelector("a[href*='loanid.php']") || 
+                   el.querySelector("a.movie-link") || 
+                   el.querySelector("a[href*='/lid=']") ||
+                   el.querySelector("a");
+
+    const href = getAttr(anchor, "href");
+    if (!href) return null;
+
+    // Extract title from various possible sources
+    const title = textOf(el.querySelector(".title, .movie-title, h2, h3, .entry-title")) || 
+                  getAttr(anchor, "title") ||
+                  getAttr(el.querySelector("img"), "alt");
+
+    if (!title || title === "Unknown") return null;
+
+    // Extract poster image
+    const img = el.querySelector("img");
+    let posterUrl = getAttr(img, "data-src", "data-original", "src");
+    posterUrl = normalizeUrl(posterUrl, manifest.baseUrl);
+
+    // Determine type (movie or series)
+    let type = "movie";
+    const typeText = textOf(el).toLowerCase();
+    if (typeText.includes("season") || typeText.includes("series") || typeText.includes("episode")) {
+      type = "series";
     }
-  }
 
-  async function loadDoc(url, extraHeaders = {}) {
-    const res = await request(url, extraHeaders);
-    return parseHtml(String(res && res.body ? res.body : ""));
-  }
-
-  function uniqueBy(items, keyFn) {
-    const out = [];
-    const seen = new Set();
-    for (const item of items || []) {
-      const k = keyFn(item);
-      if (!k || seen.has(k)) continue;
-      seen.add(k);
-      out.push(item);
-    }
-    return out;
-  }
-
-  function parsePosterItem(anchor) {
-    const href = absUrl(attr(anchor, "href"), baseUrl());
-    if (!/loanid\.php\?lid=/i.test(href)) return null;
-
-    const img = anchor.querySelector("img");
-    const title =
-      textOf(anchor.querySelector("h2, h3, h4, .title")) ||
-      decodeHtml(attr(img, "alt")) ||
-      decodeHtml(attr(anchor, "title")) ||
-      textOf(anchor);
-
-    if (!title) return null;
-
-    const posterUrl = absUrl(attr(img, "data-src", "src"), baseUrl());
     return new MultimediaItem({
-      title,
-      url: href,
-      posterUrl,
-      type: "movie",
-      contentType: "movie",
+      title: title.replace(/Watch Online|Download|Free/gi, "").trim(),
+      url: normalizeUrl(href, manifest.baseUrl),
+      posterUrl: posterUrl,
+      type: type,
+      contentType: type
     });
   }
 
-  function parseLoanItems(doc) {
-    const anchors = Array.from(doc.querySelectorAll("a[href*='loanid.php?lid=']"));
-    const items = anchors.map(parsePosterItem).filter(Boolean);
-    return uniqueBy(items, (x) => x.url);
-  }
-
-  async function fetchCategory(path) {
-    const url = absUrl(path, baseUrl());
-    const doc = await loadDoc(url);
-    return parseLoanItems(doc);
-  }
+  // --- Core Functions ---
 
   async function getHome(cb) {
     try {
+      const sections = [
+        { name: "Trending", path: "/" },
+        { name: "Latest Movies", path: "/movies/" },
+        { name: "Latest Series", path: "/series/" },
+        { name: "Bollywood", path: "/category/bollywood/" },
+        { name: "Hollywood", path: "/category/hollywood/" },
+        { name: "South Indian", path: "/category/south-indian/" },
+        { name: "Web Series", path: "/category/web-series/" }
+      ];
+
       const data = {};
-
-      const homeItems = await fetchCategory("/");
-      if (homeItems.length > 0) {
-        data.Trending = homeItems.slice(0, 30);
-      }
-
-      let menuSections = [];
-      try {
-        const doc = await loadDoc(baseUrl() + "/");
-        menuSections = Array.from(doc.querySelectorAll("nav a[href], .menu a[href], header a[href]"))
-          .map((a) => ({
-            name: textOf(a),
-            href: absUrl(attr(a, "href"), baseUrl()),
-          }))
-          .filter((s) => s.name && s.href && !/loanid\.php|loanagreement\.php|\?s=/i.test(s.href))
-          .slice(0, 8);
-      } catch (_) {}
-
-      for (const sec of menuSections) {
+      
+      for (const sec of sections) {
         try {
-          const items = await fetchCategory(sec.href);
-          if (items.length > 0) data[sec.name] = items.slice(0, 30);
-        } catch (_) {}
+          const url = sec.path === "/" ? manifest.baseUrl : `${manifest.baseUrl}${sec.path}`;
+          const doc = await loadDoc(url);
+          
+          // Try multiple selectors for movie containers
+          const selectors = [
+            ".movie-item", ".post-item", ".item", "article", 
+            ".movie", ".card", ".content-item", ".thumb"
+          ];
+          
+          let items = [];
+          for (const selector of selectors) {
+            const elements = doc.querySelectorAll(selector);
+            if (elements.length > 0) {
+              items = Array.from(elements)
+                .map(parseMovieItem)
+                .filter(Boolean);
+              if (items.length > 0) break;
+            }
+          }
+
+          // Fallback: look for any links containing loanid.php
+          if (items.length === 0) {
+            const allLinks = doc.querySelectorAll("a[href*='loanid.php']");
+            items = Array.from(allLinks)
+              .map(a => {
+                const container = a.closest("div, article, li") || a.parentElement;
+                return parseMovieItem(container);
+              })
+              .filter(Boolean);
+          }
+
+          if (items.length > 0) {
+            // Remove duplicates
+            const seen = new Set();
+            const uniqueItems = items.filter(item => {
+              if (seen.has(item.url)) return false;
+              seen.add(item.url);
+              return true;
+            });
+            
+            data[sec.name] = uniqueItems.slice(0, 24);
+          }
+        } catch (e) {
+          console.error(`Error loading section ${sec.name}:`, e);
+        }
       }
 
       cb({ success: true, data });
     } catch (e) {
-      cb({ success: false, errorCode: "HOME_ERROR", message: String(e && e.message ? e.message : e) });
+      cb({ success: false, errorCode: "HOME_ERROR", message: String(e?.message || e) });
     }
   }
 
   async function search(query, cb) {
     try {
-      const q = String(query || "").trim();
-      if (!q) return cb({ success: true, data: [] });
+      const encodedQuery = encodeURIComponent(query);
+      // Try common search URL patterns
+      const searchUrls = [
+        `${manifest.baseUrl}/search?q=${encodedQuery}`,
+        `${manifest.baseUrl}/?s=${encodedQuery}`,
+        `${manifest.baseUrl}/search/${encodedQuery}/`
+      ];
 
-      const searchUrl = baseUrl() + "/?s=" + encodeURIComponent(q);
-      const doc = await loadDoc(searchUrl);
-      const items = parseLoanItems(doc);
-      cb({ success: true, data: items.slice(0, 60) });
-    } catch (e) {
-      cb({ success: false, errorCode: "SEARCH_ERROR", message: String(e && e.message ? e.message : e) });
-    }
-  }
+      let allItems = [];
+      
+      for (const searchUrl of searchUrls) {
+        try {
+          const doc = await loadDoc(searchUrl);
+          
+          const selectors = [
+            ".movie-item", ".post-item", ".item", "article", 
+            ".movie", ".card", ".result-item"
+          ];
+          
+          for (const selector of selectors) {
+            const elements = doc.querySelectorAll(selector);
+            if (elements.length > 0) {
+              const items = Array.from(elements)
+                .map(parseMovieItem)
+                .filter(Boolean);
+              allItems.push(...items);
+            }
+          }
 
-  function parseQualityPageCandidates(doc, pageUrl) {
-    const links = [];
+          // Fallback to loanid links
+          if (allItems.length === 0) {
+            const links = doc.querySelectorAll("a[href*='loanid.php']");
+            const items = Array.from(links)
+              .map(a => parseMovieItem(a.closest("div, article, li") || a.parentElement))
+              .filter(Boolean);
+            allItems.push(...items);
+          }
 
-    const qualityAnchors = Array.from(doc.querySelectorAll("a[href*='loanagreement.php?lid=']"));
-    for (const a of qualityAnchors) {
-      const href = absUrl(attr(a, "href"), baseUrl());
-      const label = textOf(a);
-      links.push({ quality: qualityLabel(label || href), page: href });
-    }
-
-    let lid = "";
-    try {
-      lid = new URL(pageUrl).searchParams.get("lid") || "";
-    } catch (_) {
-      lid = "";
-    }
-
-    // Fallback probe for f=0..7 when quality anchors are missing.
-    if (lid && links.length === 0) {
-      for (let i = 0; i < 8; i++) {
-        links.push({
-          quality: i === 0 ? "Auto" : "Mirror " + (i + 1),
-          page: baseUrl() + "/loanagreement.php?lid=" + encodeURIComponent(lid) + "&f=" + i,
-        });
+          if (allItems.length > 0) break;
+        } catch (e) {}
       }
-    }
 
-    return uniqueBy(links, (x) => x.page);
+      // Remove duplicates and score results
+      const seen = new Set();
+      const uniqueItems = allItems.filter(item => {
+        if (seen.has(item.url)) return false;
+        seen.add(item.url);
+        return true;
+      });
+
+      // Simple scoring based on title match
+      const queryLower = query.toLowerCase();
+      uniqueItems.sort((a, b) => {
+        const aTitle = a.title.toLowerCase();
+        const bTitle = b.title.toLowerCase();
+        const aScore = aTitle.includes(queryLower) ? (aTitle.startsWith(queryLower) ? 2 : 1) : 0;
+        const bScore = bTitle.includes(queryLower) ? (bTitle.startsWith(queryLower) ? 2 : 1) : 0;
+        return bScore - aScore;
+      });
+
+      cb({ success: true, data: uniqueItems });
+    } catch (e) {
+      cb({ success: false, errorCode: "SEARCH_ERROR", message: String(e?.message || e) });
+    }
   }
 
   async function load(url, cb) {
     try {
-      const pageUrl = absUrl(url, baseUrl());
-      const doc = await loadDoc(pageUrl);
+      const doc = await loadDoc(url);
+      
+      // Extract title
+      let title = textOf(doc.querySelector("h1, .title, .movie-title, .entry-title"));
+      if (!title) {
+        title = textOf(doc.querySelector("meta[property='og:title']")) || "Unknown Title";
+      }
+      title = title.replace(/Watch Online|Download|Free/gi, "").trim();
 
-      const title =
-        textOf(doc.querySelector("h1, h2")) ||
-        decodeHtml(attr(doc.querySelector("meta[property='og:title']"), "content")) ||
-        "Unknown";
+      // Extract poster
+      let posterUrl = getAttr(doc.querySelector(".poster img, .movie-poster img, .featured-image img"), "src", "data-src");
+      if (!posterUrl) {
+        posterUrl = getAttr(doc.querySelector("meta[property='og:image']"), "content");
+      }
+      posterUrl = normalizeUrl(posterUrl, manifest.baseUrl);
 
-      const posterUrl =
-        absUrl(attr(doc.querySelector("meta[property='og:image']"), "content"), baseUrl()) ||
-        absUrl(attr(doc.querySelector("img"), "src", "data-src"), baseUrl());
+      // Extract description
+      let description = textOf(doc.querySelector(".description, .synopsis, .plot, .entry-content p"));
+      if (!description) {
+        description = getAttr(doc.querySelector("meta[name='description'], meta[property='og:description']"), "content");
+      }
 
-      const description =
-        decodeHtml(attr(doc.querySelector("meta[property='og:description'], meta[name='description']"), "content")) ||
-        textOf(doc.querySelector("article p, .entry-content p, p"));
+      // Determine type and extract episodes/qualities
+      const type = url.includes("/series/") || title.toLowerCase().includes("season") ? "series" : "movie";
 
-      const qualityCandidates = parseQualityPageCandidates(doc, pageUrl);
-      const episodeUrlPayload = JSON.stringify({
-        sourcePage: pageUrl,
-        qualities: qualityCandidates,
-      });
+      let episodes = [];
+
+      if (type === "movie") {
+        // For movies, the "episodes" are actually quality options
+        // Look for quality links on the loanid page
+        const qualityLinks = Array.from(doc.querySelectorAll("a[href*='loanagreement.php']"));
+        
+        if (qualityLinks.length > 0) {
+          episodes = qualityLinks.map((link, idx) => {
+            const qualityText = textOf(link);
+            const quality = extractQuality(qualityText);
+            const href = getAttr(link, "href");
+            
+            return new Episode({
+              name: `${quality} - ${qualityText}`,
+              url: normalizeUrl(href, manifest.baseUrl),
+              season: 1,
+              episode: idx + 1,
+              posterUrl: posterUrl
+            });
+          });
+        } else {
+          // Single movie entry
+          episodes = [new Episode({
+            name: title,
+            url: url,
+            season: 1,
+            episode: 1,
+            posterUrl: posterUrl
+          })];
+        }
+      } else {
+        // Series handling - look for episode lists
+        const episodeElements = doc.querySelectorAll(".episode-item, .ep-item, .episode");
+        
+        if (episodeElements.length > 0) {
+          episodes = Array.from(episodeElements).map((ep, idx) => {
+            const epTitle = textOf(ep.querySelector(".ep-title, .title")) || `Episode ${idx + 1}`;
+            const epLink = ep.querySelector("a[href*='loanid.php'], a[href*='loanagreement.php']");
+            const href = getAttr(epLink, "href") || url;
+            
+            return new Episode({
+              name: epTitle,
+              url: normalizeUrl(href, manifest.baseUrl),
+              season: 1,
+              episode: idx + 1,
+              posterUrl: posterUrl
+            });
+          });
+        } else {
+          // Fallback for series without explicit episode list
+          episodes = [new Episode({
+            name: title,
+            url: url,
+            season: 1,
+            episode: 1,
+            posterUrl: posterUrl
+          })];
+        }
+      }
 
       const item = new MultimediaItem({
         title,
-        url: pageUrl,
+        url,
         posterUrl,
-        type: "movie",
-        contentType: "movie",
         description,
-        episodes: [
-          new Episode({
-            name: title,
-            url: episodeUrlPayload,
-            season: 1,
-            episode: 1,
-            posterUrl,
-          }),
-        ],
+        type,
+        contentType: type,
+        episodes: episodes
       });
 
       cb({ success: true, data: item });
     } catch (e) {
-      cb({ success: false, errorCode: "LOAD_ERROR", message: String(e && e.message ? e.message : e) });
+      cb({ success: false, errorCode: "LOAD_ERROR", message: String(e?.message || e) });
     }
-  }
-
-  function extractDirectMediaLinks(content, fallbackBase) {
-    const body = String(content || "")
-      .replace(/\\u002F/gi, "/")
-      .replace(/\\u003A/gi, ":")
-      .replace(/\\\//g, "/")
-      .replace(/&amp;/g, "&");
-
-    const found = [];
-    const patterns = [
-      /(https?:\/\/[^\s"'<>]+?\.(?:mkv|mp4|m3u8|avi|mov|webm)(?:\?[^\s"'<>]*)?)/gi,
-      /href\s*=\s*["']([^"']+?\.(?:mkv|mp4|m3u8|avi|mov|webm)(?:\?[^"']*)?)["']/gi,
-      /(https?:\/\/cdn\.[^\s"'<>]+)/gi,
-    ];
-
-    for (const re of patterns) {
-      let m;
-      while ((m = re.exec(body)) !== null) {
-        const u = absUrl(m[1], fallbackBase || baseUrl());
-        if (/\.(mkv|mp4|m3u8|avi|mov|webm)(\?|$)/i.test(u) || /cdn\./i.test(u)) {
-          found.push(u);
-        }
-      }
-    }
-
-    return uniqueBy(found, (x) => x);
   }
 
   async function loadStreams(url, cb) {
     try {
-      let payload = null;
-      try {
-        payload = JSON.parse(String(url || ""));
-      } catch (_) {
-        payload = { qualities: [{ quality: "Auto", page: String(url || "") }] };
-      }
-
-      const qualityPages = (payload && Array.isArray(payload.qualities) ? payload.qualities : [])
-        .filter((q) => q && q.page)
-        .slice(0, 12);
-
       const streams = [];
-      for (const qp of qualityPages) {
-        try {
-          const res = await request(qp.page, { Referer: payload.sourcePage || baseUrl() + "/" });
-          const html = String(res && res.body ? res.body : "");
-          const directLinks = extractDirectMediaLinks(html, qp.page);
-          for (const mediaUrl of directLinks) {
-            const label = qualityLabel(qp.quality + " " + mediaUrl);
-            streams.push(
-              new StreamResult({
-                url: mediaUrl,
-                quality: label,
-                source: "TellyBiz " + label,
+      
+      // Check if this is a loanagreement.php URL (quality selection page)
+      if (url.includes("loanagreement.php")) {
+        const doc = await loadDoc(url);
+        const html = doc?.body?.innerHTML || "";
+        
+        // Look for direct download links in the page source
+        // Pattern: cdn.cdngo.site or similar CDN domains
+        const cdnPatterns = [
+          /https?:\/\/cdn\.[a-z0-9]+\.[a-z]+\/[^"'\s<>]+/gi,
+          /https?:\/\/[^"'\s<>]*cdn[^"'\s<>]*\/[^"'\s<>]+\.(mkv|mp4|m3u8|avi|mov)/gi,
+          /https?:\/\/[^"'\s<>]+\.(mkv|mp4|m3u8|avi|mov)/gi
+        ];
+
+        for (const pattern of cdnPatterns) {
+          const matches = html.match(pattern) || [];
+          for (const match of matches) {
+            if (!streams.some(s => s.url === match)) {
+              // Extract quality from URL or page context
+              const quality = extractQuality(match) || extractQuality(url);
+              
+              streams.push(new StreamResult({
+                url: match,
+                quality: quality,
+                source: `TellyBiz ${quality}`,
                 headers: {
-                  Referer: qp.page,
                   "User-Agent": UA,
-                },
-              })
-            );
+                  "Referer": url,
+                  "Origin": manifest.baseUrl
+                }
+              }));
+            }
           }
-        } catch (_) {}
+        }
+
+        // Look for iframe embeds
+        const iframes = doc.querySelectorAll("iframe[src]");
+        for (const iframe of iframes) {
+          const src = getAttr(iframe, "src");
+          if (src) {
+            streams.push(new StreamResult({
+              url: src,
+              quality: "Auto",
+              source: "Embed",
+              headers: {
+                "User-Agent": UA,
+                "Referer": url
+              }
+            }));
+          }
+        }
+      } else if (url.includes("loanid.php")) {
+        // If we got the loanid page instead of loanagreement, we need to fetch it
+        // Extract the lid parameter
+        const lidMatch = url.match(/[?&]lid=([^&]+)/);
+        if (lidMatch) {
+          const lid = lidMatch[1];
+          // Try to get the first quality option (usually 720p or 1080p)
+          const qualityUrl = `${manifest.baseUrl}/loanagreement.php?lid=${lid}&f=0`;
+          return await loadStreams(qualityUrl, cb);
+        }
       }
 
-      const deduped = uniqueBy(streams, (s) => String(s.url || "") + "|" + String(s.quality || ""));
-      deduped.sort((a, b) => toIntQuality(b.quality) - toIntQuality(a.quality));
-      cb({ success: true, data: deduped });
+      // Remove duplicates
+      const seen = new Set();
+      const uniqueStreams = streams.filter(s => {
+        if (!s.url || seen.has(s.url)) return false;
+        seen.add(s.url);
+        return true;
+      });
+
+      if (uniqueStreams.length === 0) {
+        cb({ success: false, errorCode: "NO_STREAMS", message: "No video streams found" });
+      } else {
+        cb({ success: true, data: uniqueStreams });
+      }
     } catch (e) {
-      cb({ success: false, errorCode: "STREAM_ERROR", message: String(e && e.message ? e.message : e) });
+      cb({ success: false, errorCode: "STREAM_ERROR", message: String(e?.message || e) });
     }
   }
 
+  // Export functions to global scope
   globalThis.getHome = getHome;
   globalThis.search = search;
   globalThis.load = load;
