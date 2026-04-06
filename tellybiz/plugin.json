@@ -1,0 +1,10 @@
+{
+  "packageName": "dev.akash.stars.tellybiz",
+  "name": "TellyBiz",
+  "version": 1,
+  "baseUrl": "https://tellybiz.in",
+  "description": "Stream movies and shows from TellyBiz",
+  "authors": ["YourName"],
+  "languages": ["en", "hi", "te", "ta", "ml", "kn"],
+  "categories": ["Movie", "TvSeries"]
+}
