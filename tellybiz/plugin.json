@@ -1,10 +1,10 @@
 {
-  "packageName": "dev.akash.stars.tellybiz",
+  "packageName": "dev.tellybiz.skystream",
   "name": "TellyBiz",
   "version": 2,
   "baseUrl": "https://tellybiz.in",
-  "description": "Stream movies and shows from TellyBiz",
-  "authors": ["YourName"],
-  "languages": ["en", "hi", "te", "ta", "ml", "kn"],
-  "categories": ["Movie", "TvSeries"]
+  "description": "Telugu movies and web series from TellyBiz",
+  "authors": ["TellyBiz"],
+  "languages": ["en", "te", "hi"],
+  "categories": ["Movie", "TvSeries", "AsianDrama"]
 }
