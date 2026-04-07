@@ -1,10 +1,18 @@
 {
-  "packageName": "dev.cncverse.moviezwap",
+  "packageName": "com.cncverse.moviezwap.moviezwap",
   "name": "Moviezwap",
   "version": 1,
-  "baseUrl": "https://www.moviezwap.toys",
-  "description": "Telugu & Tamil movies and HOT web series from Moviezwap. Supports 320p – 1080p quality selection.",
-  "authors": ["NivinCNC"],
-  "languages": ["te", "ta"],
-  "categories": ["Movie", "TvSeries"]
+  "baseUrl": "https://www.moviezwap.surf",
+  "description": "Telugu & Tamil Movies and Web Series",
+  "authors": [
+    "CNCVerse"
+  ],
+  "languages": [
+    "te",
+    "ta"
+  ],
+  "categories": [
+    "Movie",
+    "TvSeries"
+  ]
 }
