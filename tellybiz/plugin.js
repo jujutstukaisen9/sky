@@ -3,8 +3,10 @@
 
     const HEADERS = {
         "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9"
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "identity",
+        "Connection": "keep-alive"
     };
 
     function fixUrl(url, base) {
@@ -22,8 +24,7 @@
         return String(text)
             .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code, 10)))
             .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-            .replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&apos;/g, "'")
-            .replace(/&nbsp;/g, " ");
+            .replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&apos;/g, "'").replace(/&nbsp;/g, " ");
     }
 
     function cleanTitle(raw) {
@@ -47,7 +48,7 @@
     async function getHome(cb) {
         try {
             const res = await http_get(BASE_URL + "/", { headers: HEADERS });
-            if (!res || !res.body) return cb({ success: false, errorCode: "HOME_ERROR", message: "Failed to fetch" });
+            if (!res || !res.body) return cb({ success: false, errorCode: "HOME_ERROR" });
 
             const html = res.body;
             const items = [];
@@ -66,7 +67,7 @@
 
                 let title = titleM ? cleanTitle(titleM[1]) : "";
                 let poster = imgM ? fixUrl(imgM[1], BASE_URL) : "";
-                if (!title) {
+                if (!title && imgM) {
                     const altM = ctx.match(/alt=["']([^"']+)["']/i);
                     title = cleanTitle(altM ? altM[1] : "");
                 }
@@ -93,15 +94,18 @@
             const html = res.body;
             const items = [];
             const seen = new Set();
+
             const pattern = /<a[^>]+href=["']([^"']*loanid\.php\?lid=[^"']+)["']/gi;
             let match;
             while ((match = pattern.exec(html)) !== null) {
                 const href = match[1];
                 if (seen.has(href)) continue;
                 seen.add(href);
+
                 const ctx = html.substring(Math.max(0, match.index - 300), Math.min(html.length, match.index + 300));
                 const imgM = ctx.match(/<img[^>]+src=["']([^"']+)["']/i);
                 const titleM = ctx.match(/alt=["']([^"']+)["']/i);
+
                 let title = titleM ? cleanTitle(titleM[1]) : "";
                 const poster = imgM ? fixUrl(imgM[1], BASE_URL) : "";
                 if (!title) {
@@ -129,16 +133,20 @@
 
             const tM = html.match(/<h1[^>]+class=["'][^"']*movie-title[^"']*["'][^>]*>([^<]+)<\/h1>/i);
             if (tM) title = cleanTitle(tM[1]);
+
             const pM = html.match(/<img[^>]+class=["'][^"']*poster[^"']*["'][^>]+src=["']([^"']+)["']/i);
             if (pM) poster = fixUrl(pM[1], BASE_URL);
             if (!poster) {
                 const og = html.match(/<meta[^>]+(?:property|name)=["']og:image["'][^>]+content=["']([^"']+)["']/i);
                 if (og) poster = og[1];
             }
+
             const ovM = html.match(/<p[^>]+class=["'][^"']*overview[^"']*["'][^>]*>([\s\S]*?)<\/p>/i);
             if (ovM) description = decodeHtml(ovM[1].replace(/<[^>]+>/g, "").trim());
+
             const yM = html.match(/📅\s*(\d{4})/);
             if (yM) year = parseInt(yM[1]);
+
             const rM = html.match(/★\s*([\d.]+)\/10/);
             if (rM) score = parseFloat(rM[1]);
 
