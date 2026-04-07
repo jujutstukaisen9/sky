@@ -60,26 +60,24 @@
     "url": "https://raw.githubusercontent.com/jujutstukaisen9/sky/main/dist/dev.cncverse.Fibwatch.sky"
   },
   {
-    "packageName": "dev.akash.stars.tellybiz",
+    "packageName": "dev.tellybiz.skystream",
     "name": "TellyBiz",
     "version": 2,
     "baseUrl": "https://tellybiz.in",
-    "description": "Stream movies and shows from TellyBiz",
+    "description": "Telugu movies and web series from TellyBiz",
     "authors": [
-      "YourName"
+      "TellyBiz"
     ],
     "languages": [
       "en",
-      "hi",
       "te",
-      "ta",
-      "ml",
-      "kn"
+      "hi"
     ],
     "categories": [
       "Movie",
-      "TvSeries"
+      "TvSeries",
+      "AsianDrama"
     ],
-    "url": "https://raw.githubusercontent.com/jujutstukaisen9/sky/main/dist/dev.akash.stars.tellybiz.sky"
+    "url": "https://raw.githubusercontent.com/jujutstukaisen9/sky/main/dist/dev.tellybiz.skystream.sky"
   }
 ]
