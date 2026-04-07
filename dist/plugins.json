@@ -22,13 +22,13 @@
     "url": "https://raw.githubusercontent.com/jujutstukaisen9/sky/main/dist/dev.akash.stars.animesalt.sky"
   },
   {
-    "packageName": "dev.cncverse.moviezwap",
+    "packageName": "com.cncverse.moviezwap.moviezwap",
     "name": "Moviezwap",
     "version": 1,
-    "baseUrl": "https://www.moviezwap.toys",
-    "description": "Telugu & Tamil movies and HOT web series from Moviezwap. Supports 320p – 1080p quality selection.",
+    "baseUrl": "https://www.moviezwap.surf",
+    "description": "Telugu & Tamil Movies and Web Series",
     "authors": [
-      "NivinCNC"
+      "CNCVerse"
     ],
     "languages": [
       "te",
@@ -38,7 +38,7 @@
       "Movie",
       "TvSeries"
     ],
-    "url": "https://raw.githubusercontent.com/jujutstukaisen9/sky/main/dist/dev.cncverse.moviezwap.sky"
+    "url": "https://raw.githubusercontent.com/jujutstukaisen9/sky/main/dist/com.cncverse.moviezwap.moviezwap.sky"
   },
   {
     "packageName": "dev.cncverse.Fibwatch",
