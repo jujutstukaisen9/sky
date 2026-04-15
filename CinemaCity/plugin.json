@@ -1,0 +1,11 @@
+{
+  "name": "CinemaCity",
+  "packageName": "com.phisher98.cinemacity",
+  "version": 1,
+  "baseUrl": "https://cinemacity.cc",
+  "description": "CinemaCity – HD Movies & TV Series scraper with Cinemeta metadata enrichment. Ported from CloudStream (phisher98).",
+  "authors": ["phisher98", "ported-to-skystream"],
+  "languages": ["en"],
+  "categories": ["Movie", "TvSeries"],
+  "iconUrl": "https://cinemacity.cc/favicon.ico"
+}
