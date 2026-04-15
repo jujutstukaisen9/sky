@@ -42,23 +42,30 @@
     "url": "https://raw.githubusercontent.com/jujutstukaisen9/sky/main/dist/dev.akash.stars.animesalt.sky"
   },
   {
-    "packageName": "com.cncverse.moviezwap.moviezwap",
+    "id": "moviezwap",
     "name": "Moviezwap",
-    "version": 3,
-    "baseUrl": "https://www.moviezwap.toys",
-    "description": "Telugu & Tamil Movies and Web Series",
-    "authors": [
-      "CNCVerse"
+    "version": "1.1.0",
+    "baseUrl": "https://www.moviezwap.surf",
+    "language": "te",
+    "author": "YourName",
+    "description": "Moviezwap provider for Telugu/Tamil movies and web series",
+    "settings": [
+      {
+        "key": "useProxy",
+        "title": "Use CORS Proxy",
+        "type": "checkbox",
+        "default": false,
+        "description": "Enable if site is blocked in your region"
+      },
+      {
+        "key": "customBaseUrl",
+        "title": "Custom Base URL",
+        "type": "text",
+        "default": "",
+        "description": "Override default domain if blocked (e.g., https://moviezwap.pink)"
+      }
     ],
-    "languages": [
-      "te",
-      "ta"
-    ],
-    "categories": [
-      "Movie",
-      "TvSeries"
-    ],
-    "url": "https://raw.githubusercontent.com/jujutstukaisen9/sky/main/dist/com.cncverse.moviezwap.moviezwap.sky"
+    "url": "https://raw.githubusercontent.com/jujutstukaisen9/sky/main/dist/moviezwap.sky"
   },
   {
     "packageName": "dev.cncverse.Fibwatch",
