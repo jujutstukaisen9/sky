@@ -4,28 +4,33 @@
   */
  // manifest is injected at runtime
 
- // Configurable headers with fallback User-Agents
+ // ✅ Updated headers per your request (iPhone Safari + identity encoding)
  const HEADERS = {
-   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+   "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
    "Accept-Language": "en-US,en;q=0.9",
-   "Accept-Encoding": "gzip, deflate",
-   "Connection": "keep-alive",
-   "Upgrade-Insecure-Requests": "1",
-   "Sec-Fetch-Dest": "document",
-   "Sec-Fetch-Mode": "navigate",
-   "Sec-Fetch-Site": "none"
+   "Accept-Encoding": "identity",
+   "Connection": "keep-alive"
  };
 
  // Cookie store for session persistence
  let _cookieStore = "";
 
- // Simple DOM parser (fallback for Jsoup)
+ // Mirror domains for fallback (Moviezwap rotates frequently)
+ const MIRRORS = [
+   "https://www.moviezwap.surf",
+   "https://moviezwap.pink", 
+   "https://moviezwap.in",
+   "https://moviezwap.net",
+   "https://moviezwap.studio"
+ ];
+
+ // Simple DOM parser (lightweight Jsoup replacement)
  class SimpleDOM {
    constructor(html) { this.html = html || ""; }
    
    querySelector(selector) {
-     // Handle a[href*='/movie/'] pattern
+     // a[href*='/movie/'] pattern
      if (selector.includes("a[href*='/movie/']")) {
        const regex = /<a[^>]*href="([^"]*\/movie\/[^"#]*)"[^>]*>([\s\S]*?)<\/a>/gi;
        const results = [];
@@ -38,25 +43,27 @@
        }
        return { map: (fn) => results.map(fn).filter(Boolean) };
      }
-     // Handle img[src*='/poster/']
+     // img[src*='/poster/']
      if (selector.includes("img[src*=")) {
        const srcMatch = selector.match(/\[src\*=['"]([^'"]+)['"]\]/);
        if (srcMatch) {
-         const regex = new RegExp(`<img[^>]*src="([^"]*${srcMatch[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^"]*)"[^>]*>`, 'i');
+         const escaped = srcMatch[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');         const regex = new RegExp(`<img[^>]*src="([^"]*${escaped}[^"]*)"[^>]*>`, 'i');
          const match = this.html.match(regex);
          if (match) return { attr: (name) => name === 'src' ? match[1].trim() : '' };
        }
      }
-     // Handle td:contains() + td pattern     if (selector.includes(":contains(") && selector.includes("+ td")) {
+     // td:contains() + td
+     if (selector.includes(":contains(") && selector.includes("+ td")) {
        const containsMatch = selector.match(/:contains\(([^)]+)\)\s*\+\s*td/);
        if (containsMatch) {
          const searchText = containsMatch[1].replace(/['"]/g, '');
-         const regex = new RegExp(`<td[^>]*>[\\s\\S]*?${searchText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?</td>\\s*<td[^>]*>([\\s\\S]*?)</td>`, 'i');
+         const escaped = searchText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+         const regex = new RegExp(`<td[^>]*>[\\s\\S]*?${escaped}[\\s\\S]*?</td>\\s*<td[^>]*>([\\s\\S]*?)</td>`, 'i');
          const match = this.html.match(regex);
          if (match) return { text: () => match[1].replace(/<[^>]+>/g, '').trim() };
        }
      }
-     // Handle h2, title
+     // h2, title
      if (selector === "h2") {
        const match = this.html.match(/<h2[^>]*>([\s\S]*?)<\/h2>/i);
        if (match) return { text: () => match[1].replace(/<[^>]+>/g, '').trim() };
@@ -65,7 +72,7 @@
        const match = this.html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
        if (match) return { text: () => match[1].replace(/<[^>]+>/g, '').trim() };
      }
-     // Handle download.php / dwload.php links
+     // download.php / dwload.php
      if (selector.includes("download.php") || selector.includes("dwload.php")) {
        const regex = /<a[^>]*href="([^"]*(?:download|dwload)\.php[^"#]*)"[^>]*>([\s\S]*?)<\/a>/gi;
        const results = [];
@@ -83,20 +90,20 @@
  }
 
  // Helpers
- function fixUrl(url, base = manifest.baseUrl) {
+ function fixUrl(url, base) {
    if (!url) return "";
    if (url.startsWith("//")) return "https:" + url;
-   if (url.startsWith("/")) return base.replace(/\/$/, '') + url;
+   if (url.startsWith("/")) return (base || manifest.baseUrl).replace(/\/$/, '') + url;
    return url;
  }
-
  function getQuality(text) {
    if (!text) return "Auto";
    const t = text.toLowerCase();
    if (t.includes("2160p") || t.includes("4k")) return "2160p";
    if (t.includes("1080p")) return "1080p";
    if (t.includes("720p")) return "720p";
-   if (t.includes("480p")) return "480p";   if (t.includes("360p")) return "360p";
+   if (t.includes("480p")) return "480p";
+   if (t.includes("360p")) return "360p";
    if (t.includes("320p")) return "320p";
    return "Auto";
  }
@@ -117,34 +124,44 @@
              .replace(/&quot;/g, '"').replace(/&#39;/g, "'");
  }
 
- // Enhanced HTTP wrapper with retry & cookie support
+ // ✅ Enhanced fetch with mirror fallback + retry + cookie support
  async function safeFetch(url, headers = {}, retries = 2) {
-   try {
-     const reqHeaders = { ...HEADERS, ...headers };
-     if (_cookieStore) reqHeaders["Cookie"] = _cookieStore;
+   const bases = [manifest.baseUrl, ...MIRRORS.filter(m => m !== manifest.baseUrl)];
+   let lastError = null;
+
+   for (const base of bases) {
+     const targetUrl = url.replace(manifest.baseUrl, base);
      
-     const res = await http_get(url, reqHeaders);
-     
-     // Store cookies from response if present
-     if (res?.headers?.["set-cookie"]) {
-       _cookieStore = res.headers["set-cookie"].split(";")[0];
+     for (let attempt = 0; attempt <= retries; attempt++) {
+       try {
+         // Add small delay between retries to avoid rate limiting
+         if (attempt > 0) await new Promise(r => setTimeout(r, 800 * attempt));
+         
+         const reqHeaders = { ...HEADERS, ...headers };
+         if (_cookieStore) reqHeaders["Cookie"] = _cookieStore;
+         
+         const res = await http_get(targetUrl, reqHeaders);
+         
+         // Store cookies if present
+         if (res?.headers?.["set-cookie"]) {
+           _cookieStore = res.headers["set-cookie"].split(";")[0];
+         }         
+         if (!res || !res.body || res.statusCode >= 400) {
+           throw new Error(`HTTP ${res?.statusCode || "unknown"}`);
+         }
+         return res;
+       } catch (e) {
+         lastError = e;
+         // Continue to next mirror/retry
+       }
      }
-     
-     if (!res || !res.body || res.statusCode >= 400) {
-       throw new Error(`HTTP ${res?.statusCode || "unknown"}`);
-     }
-     return res;
-   } catch (e) {
-     if (retries > 0) {
-       // Simple exponential backoff
-       await new Promise(r => setTimeout(r, 500 * (3 - retries)));
-       return safeFetch(url, headers, retries - 1);
-     }
-     throw e;
    }
+   
+   throw lastError || new Error("All mirrors failed");
  }
 
  // ==================== CORE FUNCTIONS ====================
+
  async function getHome(cb) {
    try {
      const categories = [
@@ -177,24 +194,28 @@
                  posterUrl: "",
                  type: isSeriesTitle(title) ? "tvseries" : "movie"
                }));
-             }
-           });
+             }           });
          }
 
          if (items.length > 0) results[cat.name] = items;
        } catch (e) {
-         // Skip category if unreachable, continue with others
-         console.warn(`Category ${cat.name} failed: ${e.message}`);
+         console.warn(`[getHome] Category ${cat.name} failed: ${e.message}`);
+         // Continue with other categories
        }
      }
 
      cb({ success: Object.keys(results).length > 0,  results });
    } catch (e) {
-     cb({ success: false, errorCode: "SITE_OFFLINE", message: `Base URL unreachable: ${e.message}` });
+     cb({ 
+       success: false, 
+       errorCode: "SITE_OFFLINE", 
+       message: `Base URL unreachable. Try updating baseUrl in settings. Error: ${e.message}` 
+     });
    }
  }
 
- async function search(query, cb) {   try {
+ async function search(query, cb) {
+   try {
      const fixedQuery = encodeURIComponent(query.replace(/\s+/g, " "));
      const searchUrl = `${manifest.baseUrl}/search.php?q=${fixedQuery}`;
      const res = await safeFetch(searchUrl);
@@ -222,9 +243,9 @@
      const unique = items.filter((item, idx, self) => 
        idx === self.findIndex(t => t.url === item.url)
      );
-     cb({ success: true, data: unique });
-   } catch (e) {
-     cb({ success: true, data: [] }); // Return empty instead of error for search
+     cb({ success: true, data: unique });   } catch (e) {
+     // Return empty array instead of error for better UX
+     cb({ success: true, data: [] });
    }
  }
 
@@ -235,7 +256,7 @@
 
      const doc = new SimpleDOM(res.body);
      
-     // Extract title with fallbacks
+     // Extract title with multiple fallbacks
      let title = doc.querySelector("h2")?.text() || 
                  doc.querySelector("title")?.text()?.split("-")[0]?.trim();
      if (!title) return cb({ success: false, errorCode: "PARSE_ERROR", message: "Could not extract title" });
@@ -244,6 +265,7 @@
      // Poster
      const posterEl = doc.querySelector("img[src*='/poster/']");
      const poster = posterEl ? fixUrl(posterEl.attr("src")) : "";
+
      // Description
      const descEl = doc.querySelector("td:contains('Desc/Plot') + td");
      let description = descEl?.text() || "";
@@ -270,8 +292,7 @@
          const epMatch = /eps?(\d+)(?:\s*to\s*(\d+))?/i.exec(epTitle);
          episodes.push(new Episode({
            name: epTitle,
-           url: epUrl,
-           season: seasonMatch ? parseInt(seasonMatch[1]) : 1,
+           url: epUrl,           season: seasonMatch ? parseInt(seasonMatch[1]) : 1,
            episode: epMatch ? parseInt(epMatch[1]) : 1
          }));
        });
@@ -292,7 +313,8 @@
        })
      });
    } catch (e) {
-     cb({ success: false, errorCode: "PARSE_ERROR", message: e.message });   }
+     cb({ success: false, errorCode: "PARSE_ERROR", message: `Load failed: ${e.message}` });
+   }
  }
 
  async function loadStreams(url, cb) {
@@ -303,7 +325,7 @@
      const doc = new SimpleDOM(res.body);
      const results = [];
 
-     // Primary: Find download links
+     // Primary: Find download links (dwload.php → download.php)
      const downloadLinks = doc.querySelectorAll("a[href*='dwload.php']");
      if (downloadLinks?.map) {
        downloadLinks.map(linkEl => {
@@ -319,8 +341,7 @@
          }));
        });
      }
-
-     // Fallback: Regex extraction if selectors fail
+     // Fallback: Direct regex if selectors fail
      if (results.length === 0) {
        const linkRegex = /<a[^>]*href="([^"]*(?:download|dwload)\.php[^"#]*)"[^>]*>([\s\S]*?)<\/a>/gi;
        let m;
@@ -336,17 +357,18 @@
        }
      }
 
-     // Deduplicate
+     // Deduplicate by URL
      const unique = results.filter((item, idx, self) => 
        idx === self.findIndex(t => t.url === item.url)
      );
 
-     cb({ success: unique.length > 0,  unique });   } catch (e) {
+     cb({ success: unique.length > 0,  unique });
+   } catch (e) {
      cb({ success: false, errorCode: "PARSE_ERROR", message: `Stream extraction failed: ${e.message}` });
    }
  }
 
- // Export
+ // Export to SkyStream runtime
  globalThis.getHome = getHome;
  globalThis.search = search;
  globalThis.load = load;
