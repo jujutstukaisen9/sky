@@ -44,8 +44,8 @@
   {
     "packageName": "com.cncverse.moviezwap.moviezwap",
     "name": "Moviezwap",
-    "version": 1,
-    "baseUrl": "https://www.moviezwap.surf",
+    "version": 2,
+    "baseUrl": "https://www.moviezwap.toys",
     "description": "Telugu & Tamil Movies and Web Series",
     "authors": [
       "CNCVerse"
