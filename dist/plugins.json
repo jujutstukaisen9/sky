@@ -1,5 +1,25 @@
 [
   {
+    "name": "CinemaCity",
+    "packageName": "com.phisher98.cinemacity",
+    "version": 1,
+    "baseUrl": "https://cinemacity.cc",
+    "description": "CinemaCity – HD Movies & TV Series scraper with Cinemeta metadata enrichment. Ported from CloudStream (phisher98).",
+    "authors": [
+      "phisher98",
+      "ported-to-skystream"
+    ],
+    "languages": [
+      "en"
+    ],
+    "categories": [
+      "Movie",
+      "TvSeries"
+    ],
+    "iconUrl": "https://cinemacity.cc/favicon.ico",
+    "url": "https://raw.githubusercontent.com/jujutstukaisen9/sky/main/dist/com.phisher98.cinemacity.sky"
+  },
+  {
     "packageName": "dev.akash.stars.animesalt",
     "name": "Bollyflix",
     "version": 1,
