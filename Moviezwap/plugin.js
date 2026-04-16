@@ -1,152 +1,222 @@
-// SkyStream Plugin: Moviezwap
-// Exports must be CommonJS compatible for CLI sandbox
-const http = typeof http_get !== 'undefined' ? http_get : fetch;
+(function() {
+    /**
+     * @typedef {Object} Response
+     * @property {boolean} success
+     * @property {any} [data]
+     * @property {string} [errorCode]
+     * @property {string} [message]
+     */
 
-const HEADERS = {
-  "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-  "Accept-Language": "en-US,en;q=0.9",
-  "Accept-Encoding": "identity",
-  "Connection": "keep-alive"
-};
+    /**
+     * @type {import('@skystream/sdk').Manifest}
+     */
+    // var manifest is injected at runtime
 
-// Safe HTML extractor (no DOMParser dependency)
-function extract(html, pattern, group = 1) {
-  const match = html.match(pattern);
-  return match ? match[group].trim() : '';
-}
+    const MAIN_URL = manifest.baseUrl;
 
-function fixUrl(url, base) {
-  if (!url) return '';
-  if (url.startsWith('//')) return 'https:' + url;
-  if (url.startsWith('/')) return base.replace(/\/$/, '') + url;
-  return url;
-}
-
-function getQuality(text) {
-  const t = (text || '').toLowerCase();
-  if (/2160p|4k/.test(t)) return '2160p';
-  if (/1080p/.test(t)) return '1080p';
-  if (/720p/.test(t)) return '720p';
-  if (/480p/.test(t)) return '480p';
-  if (/320p|360p/.test(t)) return '320p';
-  return 'Auto';
-}
-
-function isSeries(text) {
-  return /season|episode|eps|web series/i.test(text || '');
-}
-
-async function getBody(url) {
-  const res = await http(url, { headers: HEADERS });
-  // Handle both fetch and custom http_get responses
-  return res.text ? await res.text() : res.body;
-}
-
-// ==================== CORE METHODS ====================
-
-async function getHome() {
-  const categories = [
-    { name: "Trending", path: "/category/Telugu-(2025)-Movies.html" },    { name: "Telugu 2026", path: "/category/Telugu-(2026)-Movies.html" },
-    { name: "Tamil 2026", path: "/category/Tamil-(2026)-Movies.html" },
-    { name: "Hollywood Dubbed", path: "/category/Telugu-Dubbed-Movies-[Hollywood].html" }
-  ];
-
-  const results = {};
-  const base = globalThis.manifest?.baseUrl || "https://www.moviezwap.surf";
-
-  for (const cat of categories) {
-    try {
-      const html = await getBody(`${base}${cat.path}`);
-      const links = [...html.matchAll(/<a[^>]*href="([^"]*\/movie\/[^"#]*)"[^>]*>([\s\S]*?)<\/a>/gi)];
-      
-      results[cat.name] = links.map(m => ({
-        name: m[2].replace(/<[^>]+>/g, '').trim() || 'Unknown',
-        url: fixUrl(m[1], base),
-        type: isSeries(m[2]) ? 'tvseries' : 'movie',
-        posterUrl: ''
-      }));
-    } catch {
-      results[cat.name] = [];
-    }
-  }
-  return results;
-}
-
-async function search(query) {
-  const base = globalThis.manifest?.baseUrl || "https://www.moviezwap.surf";
-  try {
-    const html = await getBody(`${base}/search.php?q=${encodeURIComponent(query)}`);
-    const links = [...html.matchAll(/<a[^>]*href="([^"]*\/movie\/[^"#]*)"[^>]*>([\s\S]*?)<\/a>/gi)];
-    
-    return links.map(m => ({
-      name: m[2].replace(/<[^>]+>/g, '').trim() || 'Unknown',
-      url: fixUrl(m[1], base),
-      type: isSeries(m[2]) ? 'tvseries' : 'movie',
-      posterUrl: ''
-    }));
-  } catch {
-    return [];
-  }
-}
-
-async function load(url) {
-  const base = globalThis.manifest?.baseUrl || "https://www.moviezwap.surf";
-  try {
-    const html = await getBody(url);
-    
-    const title = extract(html, /<title>([^<]+)<\/title>/i).split(/\s*-\s*/)[0] || 'Unknown';
-    const poster = extract(html, /<img[^>]*src="([^"]*poster[^"]*)"[^>]*>/i);    const descMatch = /<td[^>]*>[^<]*Desc[^<]*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/i.exec(html);
-    const description = descMatch ? descMatch[1].replace(/<[^>]+>/g, '').trim() : '';
-    const yearMatch = /\b(19|20)\d{2}\b/.exec(title);
-    const year = yearMatch ? parseInt(yearMatch[0]) : null;
-
-    const links = [...html.matchAll(/<a[^>]*href="([^"]*\/movie\/[^"#]*)"[^>]*>([\s\S]*?)<\/a>/gi)];
-    const episodes = links.length > 0 && isSeries(title)
-      ? links.map((l, i) => ({ name: l[2].replace(/<[^>]+>/g, '').trim(), url: fixUrl(l[1], base), season: 1, episode: i + 1 }))
-      : [{ name: 'Movie', url, season: 1, episode: 1 }];
-
-    return {
-      name: title.replace(/Moviezwap/gi, '').trim(),
-      url,
-      type: isSeries(title) ? 'tvseries' : 'movie',
-      posterUrl: fixUrl(poster, base),
-      year,
-      description,
-      episodes
-    };
-  } catch (e) {
-    throw new Error(`load failed: ${e.message}`);
-  }
-}
-
-async function loadStreams(url) {
-  const base = globalThis.manifest?.baseUrl || "https://www.moviezwap.surf";
-  try {
-    const html = await getBody(url);
-    const streams = [];
-
-    // Find dwload/download links
-    const matches = [...html.matchAll(/<a[^>]*href="([^"]*(?:dwload|download)\.php[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi)];
-    
-    for (const m of matches) {
-      streams.push({
-        url: fixUrl(m[1].replace('dwload.php', 'download.php'), base),
-        title: `Moviezwap - ${m[2].replace(/<[^>]+>/g, '').trim()}`,
-        quality: getQuality(m[2]),
-        headers: HEADERS,
-        type: 'direct'
-      });
+    async function _fetch(url) {
+        const res = await http_get(url, { 
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
+            "Referer": MAIN_URL
+        });
+        return res.body || "";
     }
 
-    return streams;
-  } catch (e) {
-    throw new Error(`loadStreams failed: ${e.message}`);
-  }
-}
+    function _fixUrl(url) {
+        if (!url) return "";
+        if (url.startsWith("http")) return url;
+        if (url.startsWith("//")) return "https:" + url;
+        return MAIN_URL + (url.startsWith("/") ? "" : "/") + url;
+    }
 
-// SkyStream CLI requires module.exports or globalThis attachmentmodule.exports = { getHome, search, load, loadStreams };
-globalThis.getHome = getHome;
-globalThis.search = search;
-globalThis.load = load;
-globalThis.loadStreams = loadStreams;
+    function _parseSearchResults(html) {
+        const results = [];
+        const regex = /<a[^>]+href="([^"]*\/movie\/[^"]*)"[^>]*>([\s\S]*?)<\/a>/g;
+        let match;
+        const seenUrls = new Set();
+
+        while ((match = regex.exec(html)) !== null) {
+            const href = match[1];
+            const fullUrl = _fixUrl(href);
+            if (seenUrls.has(fullUrl)) continue;
+            seenUrls.add(fullUrl);
+
+            let title = match[2].replace(/<[^>]*>/g, "").trim();
+            if (!title) {
+                title = href.split("/").pop().replace(".html", "").replace(/-/g, " ");
+            }
+
+            if (!title || title.toLowerCase() === "home") continue;
+
+            const isSeries = /(season|episodes?|eps|all episodes|web series)/i.test(title);
+
+            results.push(new MultimediaItem({
+                title: title,
+                url: fullUrl,
+                posterUrl: "", 
+                type: isSeries ? "series" : "movie"
+            }));
+        }
+        return results;
+    }
+
+    async function getHome(cb) {
+        try {
+            const categories = [
+                { name: "Telugu (2026) Movies", url: "/category/Telugu-(2026)-Movies.html" },
+                { name: "Telugu (2025) Movies", url: "/category/Telugu-(2025)-Movies.html" },
+                { name: "Tamil (2026) Movies", url: "/category/Tamil-(2026)-Movies.html" },
+                { name: "Tamil (2025) Movies", url: "/category/Tamil-(2025)-Movies.html" },
+                { name: "Telugu Dubbed Hollywood", url: "/category/Telugu-Dubbed-Movies-[Hollywood].html" },
+                { name: "HOT Web Series", url: "/category/HOT-Web-Series.html" }
+            ];
+
+            const homeData = {};
+            
+            for (const cat of categories) {
+                try {
+                    const html = await _fetch(_fixUrl(cat.url));
+                    const items = _parseSearchResults(html);
+                    if (items.length > 0) {
+                        homeData[cat.name] = items;
+                    }
+                } catch (e) {}
+            }
+
+            cb({ success: true, data: homeData });
+        } catch (e) {
+            cb({ success: false, errorCode: "PARSE_ERROR", message: e.toString() });
+        }
+    }
+
+    async function search(query, cb) {
+        try {
+            const fixedQuery = query.replace(/\s+/g, "+");
+            const searchUrl = `${MAIN_URL}/search.php?q=${fixedQuery}`;
+            const html = await _fetch(searchUrl);
+            const results = _parseSearchResults(html);
+            cb({ success: true, data: results });
+        } catch (e) {
+            cb({ success: false, errorCode: "PARSE_ERROR", message: e.toString() });
+        }
+    }
+
+    async function load(url, cb) {
+        try {
+            const html = await _fetch(url);
+            
+            let title = html.match(/<h2[^>]*>([\s\S]*?)<\/h2>/)?.[1]?.trim();
+            if (!title) {
+                title = html.match(/<title>([\s\S]*?)<\/title>/)?.[1]?.split("-")[0]?.trim();
+            }
+            
+            const posterMatch = html.match(/<img[^>]+src="([^"]*\/poster\/[^"]*)"/);
+            const posterUrl = posterMatch ? _fixUrl(posterMatch[1]) : "";
+            
+            let description = "";
+            const descMatch = html.match(/Desc\/Plot[\s\S]*?<td[^>]*>([\s\S]*?)<\/td>/i);
+            if (descMatch) {
+                description = descMatch[1].replace(/<[^>]*>/g, "").trim();
+            } else {
+                const pMatch = html.match(/<p[^>]*>([\s\S]*?)<\/p>/);
+                if (pMatch) description = pMatch[1].replace(/<[^>]*>/g, "").trim();
+            }
+            
+            const yearMatch = html.match(/(\d{4})/);
+            const year = yearMatch ? parseInt(yearMatch[1]) : null;
+            
+            const isSeries = /(season|episodes?|eps|all episodes|web series)/i.test(title || "");
+            
+            const episodeLinks = [];
+            const epRegex = /<div class="catList">[\s\S]*?<a[^>]+href="([^"]*\/movie\/[^"]*)"[^>]*>([\s\S]*?)<\/a>/g;
+            let match;
+            while ((match = epRegex.exec(html)) !== null) {
+                const epUrl = _fixUrl(match[1]);
+                const epName = match[2].replace(/<[^>]*>/g, "").trim();
+                
+                const sMatch = epName.match(/Season\s*(\d+)/i);
+                const eMatch = epName.match(/Eps?\s*\(?(\d+)/i);
+                
+                episodeLinks.push(new Episode({
+                    name: epName,
+                    url: epUrl,
+                    season: sMatch ? parseInt(sMatch[1]) : 1,
+                    episode: eMatch ? parseInt(eMatch[1]) : (episodeLinks.length + 1)
+                }));
+            }
+            
+            const item = new MultimediaItem({
+                title: title || "Unknown",
+                url: url,
+                posterUrl: posterUrl,
+                type: isSeries ? "series" : "movie",
+                description: description,
+                year: year
+            });
+            
+            if (episodeLinks.length > 0) {
+                item.episodes = episodeLinks;
+            } else {
+                item.episodes = [new Episode({
+                    name: title || "Full Movie",
+                    url: url,
+                    season: 1,
+                    episode: 1
+                })];
+            }
+            
+            cb({ success: true, data: item });
+        } catch (e) {
+            cb({ success: false, errorCode: "PARSE_ERROR", message: e.stack });
+        }
+    }
+
+    async function loadStreams(url, cb) {
+        try {
+            const html = await _fetch(url);
+            const streams = [];
+            
+            const dlRegex = /<a[^>]+href=["']([^"']*dwload\.php[^"']*)["'][^>]*>([\s\S]*?)<\/a>/g;
+            let match;
+            
+            while ((match = dlRegex.exec(html)) !== null) {
+                const dlPageUrl = _fixUrl(match[1].replace("dwload.php", "download.php"));
+                const linkText = match[2].replace(/<[^>]*>/g, "").trim();
+                
+                let quality = "Unknown";
+                if (/1080p/i.test(linkText)) quality = "1080p";
+                else if (/720p/i.test(linkText)) quality = "720p";
+                else if (/480p/i.test(linkText)) quality = "480p";
+                else if (/360p/i.test(linkText)) quality = "360p";
+                else if (/320p/i.test(linkText)) quality = "320p";
+
+                try {
+                    const dlHtml = await _fetch(dlPageUrl);
+                    const fastDlMatch = dlHtml.match(/<a[^>]+href=["']([^"']*)["'][^>]*>Fast Download Server<\/a>/i);
+                    const finalUrl = fastDlMatch ? _fixUrl(fastDlMatch[1]) : dlPageUrl;
+                    
+                    streams.push(new StreamResult({
+                        url: finalUrl,
+                        quality: quality,
+                        headers: { "Referer": MAIN_URL }
+                    }));
+                } catch (e) {
+                    streams.push(new StreamResult({
+                        url: dlPageUrl,
+                        quality: quality,
+                        headers: { "Referer": MAIN_URL }
+                    }));
+                }
+            }
+            
+            cb({ success: true, data: streams });
+        } catch (e) {
+            cb({ success: false, errorCode: "PARSE_ERROR", message: e.stack });
+        }
+    }
+
+    globalThis.getHome = getHome;
+    globalThis.search = search;
+    globalThis.load = load;
+    globalThis.loadStreams = loadStreams;
+})();
