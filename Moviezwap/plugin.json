@@ -1,9 +1,19 @@
 {
+  "packageName": "com.manus.moviezwap.moviezwap",
   "name": "Moviezwap",
-  "version": "1.0.0",
-  "author": "YourName",
-  "description": "Telugu & Tamil Movies and Web Series",
-  "baseUrl": "https://www.moviezwap.surf",
-  "language": "te",
-  "main": "plugin.js"
+  "version": 1,
+  "baseUrl": "https://www.moviezwap.toys",
+  "description": "Moviezwap plugin for Skystream",
+  "authors": [
+    "Manus"
+  ],
+  "languages": [
+    "te",
+    "ta",
+    "en"
+  ],
+  "categories": [
+    "Movies",
+    "TV Series"
+  ]
 }
